@@ -50,6 +50,15 @@ class AuthSession {
     );
   }
 
+  /// The same session with a new access token, after a refresh.
+  AuthSession withAccessToken(String accessToken) => AuthSession(
+        staffId: staffId,
+        staffName: staffName,
+        roles: roles,
+        accessToken: accessToken,
+        refreshToken: refreshToken,
+      );
+
   Map<String, dynamic> toJson() => {
         'staffId': staffId,
         'staffName': staffName,

@@ -3,32 +3,25 @@ import 'package:flutter/material.dart';
 import 'auth/auth_api.dart';
 import 'auth/auth_session.dart';
 import 'auth/login_screen.dart';
+import 'auth/session_manager.dart';
 import 'auth/session_store.dart';
-import 'auth/sign_in.dart';
 import 'config/app_config.dart';
 import 'theme/app_theme.dart';
 
 void main() {
   // Secure storage uses a platform channel, which needs the binding first.
   WidgetsFlutterBinding.ensureInitialized();
-  final store = SecureSessionStore();
-  runApp(
-    CashClientApp(
-      sessionStore: store,
-      signIn: SignIn(AuthApi(baseUrl: AppConfig.apiBaseUrl), store),
-    ),
-  );
+  final sessions = SessionManager(
+    api: AuthApi(baseUrl: AppConfig.apiBaseUrl),
+    store: SecureSessionStore(),
+  )..restore();
+  runApp(CashClientApp(sessions: sessions));
 }
 
 class CashClientApp extends StatelessWidget {
-  const CashClientApp({
-    super.key,
-    required this.sessionStore,
-    required this.signIn,
-  });
+  const CashClientApp({super.key, required this.sessions});
 
-  final SessionStore sessionStore;
-  final SignIn signIn;
+  final SessionManager sessions;
 
   @override
   Widget build(BuildContext context) {
@@ -40,73 +33,36 @@ class CashClientApp extends StatelessWidget {
       // Follows the phone's setting. An in-app choice comes with the
       // settings screen.
       themeMode: ThemeMode.system,
-      home: AuthGate(sessionStore: sessionStore, signIn: signIn),
+      home: AuthGate(sessions: sessions),
     );
   }
 }
 
-/// Shows the login screen or the signed-in app, depending on whether a
-/// session is stored on the device.
-class AuthGate extends StatefulWidget {
-  const AuthGate({super.key, required this.sessionStore, required this.signIn});
+/// Shows the login screen or the signed-in app, and switches between them
+/// whenever the session changes, including when the backend ends it.
+class AuthGate extends StatelessWidget {
+  const AuthGate({super.key, required this.sessions});
 
-  final SessionStore sessionStore;
-  final SignIn signIn;
-
-  @override
-  State<AuthGate> createState() => _AuthGateState();
-}
-
-class _AuthGateState extends State<AuthGate> {
-  bool _loading = true;
-  AuthSession? _session;
-
-  @override
-  void initState() {
-    super.initState();
-    _restore();
-  }
-
-  Future<void> _restore() async {
-    AuthSession? session;
-    try {
-      session = await widget.sessionStore.read();
-    } catch (_) {
-      // If the stored session can't be read (for example after the device's
-      // keys changed), the only safe outcome is to sign in again.
-      session = null;
-    }
-    // A stored session from a non-collector shouldn't exist, because SignIn
-    // never saves one. Guard anyway rather than trust the device.
-    if (session != null && !session.isCollector) session = null;
-    if (!mounted) return;
-    setState(() {
-      _session = session;
-      _loading = false;
-    });
-  }
-
-  Future<void> _signOut() async {
-    // The backend has no logout endpoint yet, so signing out means
-    // forgetting the tokens on this device.
-    await widget.sessionStore.clear();
-    if (!mounted) return;
-    setState(() => _session = null);
-  }
+  final SessionManager sessions;
 
   @override
   Widget build(BuildContext context) {
-    if (_loading) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
-    }
-    final session = _session;
-    if (session == null) {
-      return LoginScreen(
-        signIn: widget.signIn,
-        onSignedIn: (signedIn) => setState(() => _session = signedIn),
-      );
-    }
-    return _SignedInPlaceholder(session: session, onSignOut: _signOut);
+    return ListenableBuilder(
+      listenable: sessions,
+      builder: (context, _) {
+        if (sessions.isRestoring) {
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+        final session = sessions.session;
+        if (session == null) return LoginScreen(sessions: sessions);
+        return _SignedInPlaceholder(
+          session: session,
+          onSignOut: sessions.signOut,
+        );
+      },
+    );
   }
 }
 

@@ -1,6 +1,6 @@
-import 'package:cash_client/auth/auth_session.dart';
+import 'package:cash_client/auth/auth_api.dart';
 import 'package:cash_client/auth/login_screen.dart';
-import 'package:cash_client/auth/sign_in.dart';
+import 'package:cash_client/auth/session_manager.dart';
 import 'package:cash_client/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -10,17 +10,16 @@ import '../support/fakes.dart';
 
 void main() {
   late MemorySessionStore store;
-  AuthSession? signedIn;
+  late SessionManager sessions;
 
-  Future<void> pumpLogin(WidgetTester tester, SignIn signIn) async {
-    signedIn = null;
+  Future<void> pumpLogin(WidgetTester tester, AuthApi api) async {
+    store = MemorySessionStore();
+    sessions = SessionManager(api: api, store: store);
+    await sessions.restore();
     await tester.pumpWidget(
       MaterialApp(
         theme: AppTheme.light,
-        home: LoginScreen(
-          signIn: signIn,
-          onSignedIn: (session) => signedIn = session,
-        ),
+        home: LoginScreen(sessions: sessions),
       ),
     );
   }
@@ -43,29 +42,24 @@ void main() {
     await tapSubmit(tester);
   }
 
-  setUp(() => store = MemorySessionStore());
-
   testWidgets('empty fields are flagged and nothing is sent', (tester) async {
     final requests = <http.Request>[];
-    await pumpLogin(
-      tester,
-      SignIn(fakeAuthApi(200, loginBody(), requests: requests), store),
-    );
+    await pumpLogin(tester, fakeAuthApi(200, loginBody(), requests: requests));
 
     await tapSubmit(tester);
 
     expect(find.text('Enter your staff ID'), findsOneWidget);
     expect(find.text('Enter your password'), findsOneWidget);
     expect(requests, isEmpty);
-    expect(signedIn, isNull);
+    expect(sessions.session, isNull);
   });
 
   testWidgets('a collector is signed in', (tester) async {
-    await pumpLogin(tester, SignIn(fakeAuthApi(200, loginBody()), store));
+    await pumpLogin(tester, fakeAuthApi(200, loginBody()));
 
     await enterAndSubmit(tester);
 
-    expect(signedIn?.staffName, 'KOFI MENSAH');
+    expect(sessions.session?.staffName, 'KOFI MENSAH');
     expect(store.session, isNotNull);
   });
 
@@ -73,10 +67,7 @@ void main() {
       (tester) async {
     await pumpLogin(
       tester,
-      SignIn(
-        fakeAuthApi(401, errorBody(401, 'Invalid ID or password')),
-        store,
-      ),
+      fakeAuthApi(401, errorBody(401, 'Invalid ID or password')),
     );
 
     await enterAndSubmit(tester, password: 'wrong');
@@ -89,13 +80,13 @@ void main() {
       ),
     );
     expect(password.controller.text, isEmpty);
-    expect(signedIn, isNull);
+    expect(sessions.session, isNull);
   });
 
   testWidgets('a non-collector is turned away', (tester) async {
     await pumpLogin(
       tester,
-      SignIn(fakeAuthApi(200, loginBody(roles: ['ADMINISTRATOR'])), store),
+      fakeAuthApi(200, loginBody(roles: ['ADMINISTRATOR'])),
     );
 
     await enterAndSubmit(tester);
@@ -103,14 +94,20 @@ void main() {
     expect(find.byKey(const Key('login.error')), findsOneWidget);
     expect(find.textContaining('desktop app'), findsOneWidget);
     expect(store.session, isNull);
-    expect(signedIn, isNull);
+    expect(sessions.session, isNull);
   });
 
   testWidgets('the staff ID is trimmed before it is sent', (tester) async {
-    await pumpLogin(tester, SignIn(fakeAuthApi(200, loginBody()), store));
+    await pumpLogin(tester, fakeAuthApi(200, loginBody()));
 
     await enterAndSubmit(tester, staffId: '  STF001 ');
 
-    expect(signedIn?.staffId, 'STF001');
+    expect(sessions.session?.staffId, 'STF001');
+  });
+
+  testWidgets('no session-ended notice on a normal start', (tester) async {
+    await pumpLogin(tester, fakeAuthApi(200, loginBody()));
+
+    expect(find.byKey(const Key('login.notice')), findsNothing);
   });
 }

@@ -1,18 +1,15 @@
 import 'package:flutter/material.dart';
 
 import '../theme/app_status_colors.dart';
-import 'auth_session.dart';
+import 'session_manager.dart';
 import 'sign_in.dart';
 
 class LoginScreen extends StatefulWidget {
-  const LoginScreen({
-    super.key,
-    required this.signIn,
-    required this.onSignedIn,
-  });
+  const LoginScreen({super.key, required this.sessions});
 
-  final SignIn signIn;
-  final ValueChanged<AuthSession> onSignedIn;
+  /// Signing in through this updates the session, which takes the app past
+  /// this screen.
+  final SessionManager sessions;
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -42,14 +39,14 @@ class _LoginScreenState extends State<LoginScreen> {
     FocusScope.of(context).unfocus();
     setState(() => _submitting = true);
     try {
-      final session = await widget.signIn(
+      await widget.sessions.signIn(
         // Staff IDs never contain spaces, so trailing ones from the keyboard
         // are dropped. The password is sent exactly as typed.
         staffId: _staffIdController.text.trim(),
         password: _passwordController.text,
       );
-      if (!mounted) return;
-      widget.onSignedIn(session);
+      // Normally the app has already moved past this screen by now.
+      if (mounted) setState(() => _submitting = false);
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -142,6 +139,12 @@ class _LoginScreenState extends State<LoginScreen> {
                         if (_error != null) ...[
                           const SizedBox(height: 16),
                           _ErrorBanner(message: _error!),
+                        ] else if (widget.sessions.sessionEndedByServer) ...[
+                          const SizedBox(height: 16),
+                          const _NoticeBanner(
+                            message:
+                                'Your session has ended. Sign in again to continue.',
+                          ),
                         ],
                         const SizedBox(height: 24),
                         FilledButton(
@@ -244,6 +247,44 @@ class _ErrorBanner extends StatelessWidget {
                   message,
                   key: const Key('login.error'),
                   style: TextStyle(color: status.danger),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Explains why the collector is back at sign-in when they didn't sign out.
+class _NoticeBanner extends StatelessWidget {
+  const _NoticeBanner({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final status = AppStatusColors.of(context);
+    return Semantics(
+      liveRegion: true,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: status.warningContainer,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.info_outline, color: status.warning, size: 20),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  message,
+                  key: const Key('login.notice'),
+                  style: TextStyle(color: status.warning),
                 ),
               ),
             ],

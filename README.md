@@ -11,7 +11,7 @@ The app is a client of the `bankingbackend` Spring Boot API. It holds no busines
 | Light and dark theme (Indigo Aurora palette) | Done. Follows the phone's light/dark setting |
 | In-app theme choice (system / light / dark) | Planned with the settings screen |
 | Sign-in (collectors only) and sign-out | Done. Tokens kept in secure storage |
-| Automatic token refresh, handling a 401 | Not started |
+| Automatic token refresh; back to sign-in when the backend ends the session | Done |
 | One device per collector | Not started. Waiting on backend decision D36 |
 | Member account lookup: name and accounts only (online and offline) | Not started. Needs a backend endpoint |
 | Deposits and share payments (online and offline, with sync) | Not started. Needs the backend deposit endpoint |
@@ -47,10 +47,21 @@ Debug builds may use plain `http` so a local backend works. Release builds use A
 - Calls `POST /api/auth/v1/login` with `staffId` and `password`. The backend returns `staffName`, `roles`, `authToken` and `refreshToken`; a wrong ID or password, or an inactive account, returns 401.
 - The backend signs in any staff role, so the app checks for `COLLECTOR`. Anyone else sees a message pointing them to the desktop app, and their tokens are discarded, not stored. The backend still enforces permissions on every endpoint.
 - The session (tokens, staff ID, name, roles) is stored with `flutter_secure_storage`, backed by the Android Keystore. The password is never stored. App backup is turned off so tokens never leave the phone.
-- On launch, a stored session skips sign-in, so a collector stays signed in until they sign out.
+- On launch, a stored session skips sign-in, so a collector stays signed in until they sign out or the backend ends the session.
 - Signing out only forgets the tokens on the phone; the backend has no logout endpoint yet. The tokens stay valid until they expire. Their lifetimes are set by the backend's `JWT_ACCESS_EXPIRATION` and `JWT_REFRESH_EXPIRATION`.
 
-Code: `lib/auth/` (`auth_api.dart`, `sign_in.dart`, `session_store.dart`, `login_screen.dart`), the error mapping in `lib/api/api_exception.dart`, and the sign-in/home switch in `lib/main.dart`. After sign-in the app shows a placeholder until the home screen exists.
+Code: `lib/auth/` (`auth_api.dart`, `session_manager.dart`, `session_store.dart`, `login_screen.dart`, and the sign-in messages in `sign_in.dart`), the error mapping in `lib/api/api_exception.dart`, and the sign-in/home switch in `lib/main.dart`. After sign-in the app shows a placeholder until the home screen exists.
+
+## Token refresh
+
+Calls to protected endpoints go through `AuthenticatedClient` (`lib/api/authenticated_client.dart`). Future features use it instead of a plain `http.Client`.
+
+- It adds `Authorization: Bearer <access token>` to every request.
+- On a 401 it calls `POST /api/auth/v1/refresh-token`, saves the new access token and replays the request once, body included. Requests that hit a 401 at the same moment share one refresh call.
+- The backend doesn't issue a new refresh token, so when the refresh token expires (or the collector is deactivated) the refresh gets a 401. The session then ends: the tokens are cleared and the app returns to sign-in with "Your session has ended." The same path will handle the backend ending the session after the day's submission is approved.
+- If the refresh can't reach the server, the session is kept, so a collector isn't signed out for being offline.
+- A 403 is passed straight through. It means the role isn't allowed, and a new token wouldn't change that.
+- Multipart and streamed requests can't be replayed: on a 401 they still trigger a refresh, but the caller gets the 401 and has to retry.
 
 ## Theme
 

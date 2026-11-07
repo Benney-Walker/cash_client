@@ -8,9 +8,13 @@ enum ApiFailure {
   /// No connection, DNS failure, timeout and the like.
   network,
 
-  /// 401 from the login endpoint: wrong staff ID or password, or an
-  /// inactive account. The backend deliberately doesn't say which.
-  invalidCredentials,
+  /// 401. From the login endpoint this means a wrong staff ID or password,
+  /// or an inactive account (the backend deliberately doesn't say which).
+  /// Anywhere else it means the session is no longer valid.
+  unauthorized,
+
+  /// 403: signed in, but this role isn't allowed to do that.
+  forbidden,
 
   /// 400: the backend rejected the request's fields.
   validation,
@@ -37,7 +41,8 @@ class ApiException implements Exception {
   factory ApiException.fromResponse(int statusCode, String body) {
     final failure = switch (statusCode) {
       400 => ApiFailure.validation,
-      401 => ApiFailure.invalidCredentials,
+      401 => ApiFailure.unauthorized,
+      403 => ApiFailure.forbidden,
       >= 500 => ApiFailure.server,
       _ => ApiFailure.unexpectedResponse,
     };

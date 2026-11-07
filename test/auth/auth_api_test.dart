@@ -64,10 +64,10 @@ void main() {
       }
     });
 
-    test('401 means invalid credentials', () {
+    test("401 means unauthorized (wrong ID or password)", () {
       final api = fakeAuthApi(401, errorBody(401, 'Invalid ID or password'));
       expect(api.login(staffId: 'a', password: 'b'),
-          failsWith(ApiFailure.invalidCredentials));
+          failsWith(ApiFailure.unauthorized));
     });
 
     test('400 carries the field errors from the backend', () async {
@@ -131,6 +131,38 @@ void main() {
         expect(api.login(staffId: 'a', password: 'b'),
             failsWith(ApiFailure.notConfigured));
       }
+    });
+  });
+
+  group('AuthApi.refreshAccessToken', () {
+    test('posts the refresh token and returns the new access token',
+        () async {
+      final requests = <http.Request>[];
+      final api = fakeAuthApi(
+        200,
+        jsonEncode({'authToken': 'new-access'}),
+        requests: requests,
+      );
+
+      final token = await api.refreshAccessToken('refresh-token');
+
+      expect(token, 'new-access');
+      expect(requests.single.url.toString(),
+          '$testBaseUrl/api/auth/v1/refresh-token');
+      expect(jsonDecode(requests.single.body),
+          {'refreshToken': 'refresh-token'});
+    });
+
+    test('401 (expired refresh token or inactive staff) is unauthorized', () {
+      final api = fakeAuthApi(401, errorBody(401, 'Invalid refresh token'));
+      expect(api.refreshAccessToken('old'),
+          failsWith(ApiFailure.unauthorized));
+    });
+
+    test('a 200 without a token is an unexpected response', () {
+      final api = fakeAuthApi(200, jsonEncode({}));
+      expect(api.refreshAccessToken('x'),
+          failsWith(ApiFailure.unexpectedResponse));
     });
   });
 }

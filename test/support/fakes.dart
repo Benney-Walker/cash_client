@@ -72,3 +72,38 @@ const collectorSession = AuthSession(
   accessToken: 'access-token',
   refreshToken: 'refresh-token',
 );
+
+/// An [AuthApi] whose refresh endpoint answers with [refresh] each time it's
+/// called. [calls] counts the refresh calls. [delay] holds each answer back,
+/// so tests can make requests overlap.
+class FakeRefreshApi {
+  FakeRefreshApi(this.refresh, {this.delay = Duration.zero});
+
+  /// Status and body to answer with. Change it between calls if needed.
+  (int, String) refresh;
+  final Duration delay;
+  int calls = 0;
+
+  /// When true, the refresh call fails as if the phone had no connection.
+  bool offline = false;
+
+  late final AuthApi api = AuthApi(
+    baseUrl: testBaseUrl,
+    client: MockClient((request) async {
+      if (request.url.path.endsWith('/refresh-token')) {
+        calls++;
+        if (delay > Duration.zero) await Future<void>.delayed(delay);
+        if (offline) throw http.ClientException('no connection');
+        final (status, body) = refresh;
+        return http.Response(body, status);
+      }
+      return http.Response(loginBody(), 200);
+    }),
+  );
+
+  static (int, String) issues(String token) =>
+      (200, jsonEncode({'authToken': token}));
+
+  static (int, String) refuses() =>
+      (401, errorBody(401, 'Invalid refresh token'));
+}

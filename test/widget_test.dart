@@ -1,4 +1,4 @@
-import 'package:cash_client/auth/sign_in.dart';
+import 'package:cash_client/auth/session_manager.dart';
 import 'package:cash_client/main.dart';
 import 'package:cash_client/theme/app_status_colors.dart';
 import 'package:flutter/material.dart';
@@ -7,19 +7,19 @@ import 'package:flutter_test/flutter_test.dart';
 import 'support/fakes.dart';
 
 void main() {
-  Future<MemorySessionStore> pumpApp(
+  Future<SessionManager> pumpApp(
     WidgetTester tester, {
     MemorySessionStore? store,
+    FakeRefreshApi? backend,
   }) async {
-    final sessionStore = store ?? MemorySessionStore();
-    await tester.pumpWidget(
-      CashClientApp(
-        sessionStore: sessionStore,
-        signIn: SignIn(fakeAuthApi(200, loginBody()), sessionStore),
-      ),
+    final sessions = SessionManager(
+      api: (backend ?? FakeRefreshApi(FakeRefreshApi.issues('new'))).api,
+      store: store ?? MemorySessionStore(),
     );
+    await tester.pumpWidget(CashClientApp(sessions: sessions));
+    await sessions.restore();
     await tester.pumpAndSettle();
-    return sessionStore;
+    return sessions;
   }
 
   testWidgets('opens at sign-in when no session is stored', (tester) async {
@@ -32,16 +32,35 @@ void main() {
     expect(find.text('Signed in as KOFI MENSAH'), findsOneWidget);
   });
 
-  testWidgets('signing out clears the session and returns to sign-in',
+  testWidgets('signing out returns to sign-in without a notice',
       (tester) async {
-    final store =
-        await pumpApp(tester, store: MemorySessionStore(collectorSession));
+    final store = MemorySessionStore(collectorSession);
+    await pumpApp(tester, store: store);
 
     await tester.tap(find.byKey(const Key('home.signOut')));
     await tester.pumpAndSettle();
 
     expect(store.session, isNull);
     expect(find.byKey(const Key('login.submit')), findsOneWidget);
+    expect(find.byKey(const Key('login.notice')), findsNothing);
+  });
+
+  testWidgets('when the backend ends the session, the app returns to sign-in '
+      'and says why', (tester) async {
+    final backend = FakeRefreshApi(FakeRefreshApi.refuses());
+    final sessions = await pumpApp(
+      tester,
+      store: MemorySessionStore(collectorSession),
+      backend: backend,
+    );
+    expect(find.text('Signed in as KOFI MENSAH'), findsOneWidget);
+
+    // What the authenticated client does when a request's refresh is refused.
+    await expectLater(sessions.refreshAccessToken(), throwsException);
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('login.submit')), findsOneWidget);
+    expect(find.byKey(const Key('login.notice')), findsOneWidget);
   });
 
   testWidgets('follows the device into dark mode', (tester) async {
