@@ -9,10 +9,11 @@ The app is a client of the `bankingbackend` Spring Boot API. It holds no busines
 | Area | State |
 |---|---|
 | Light and dark theme (Indigo Aurora palette) | Done. Follows the phone's light/dark setting |
-| In-app theme choice (system / light / dark) | Not started. Needs the choice saved on the device |
+| In-app theme choice (system / light / dark) | Planned with the settings screen |
 | Sign-in, token refresh, single device | Not started |
-| Assigned member lookup (online and offline) | Not started. Needs a backend endpoint |
-| Deposits (online and offline, with sync) | Not started. Needs the backend deposit endpoint |
+| Member account lookup: name and accounts only (online and offline) | Not started. Needs a backend endpoint |
+| Deposits and share payments (online and offline, with sync) | Not started. Needs the backend deposit endpoint |
+| Corrections within 10 minutes | Not started. Needs backend support |
 | Withdrawal requests | Not started. Needs backend support |
 | Location tracking | Not started. Needs backend support |
 | Transaction history | Not started |
