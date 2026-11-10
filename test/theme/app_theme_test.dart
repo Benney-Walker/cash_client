@@ -93,9 +93,15 @@ void main() {
       });
 
       test('buttons meet the 48dp touch target', () {
-        final size = theme.filledButtonTheme.style!.minimumSize!
-            .resolve(<WidgetState>{});
-        expect(size!.height, greaterThanOrEqualTo(AppTheme.minTouchTarget));
+        for (final style in [
+          theme.filledButtonTheme.style,
+          theme.outlinedButtonTheme.style,
+          theme.textButtonTheme.style,
+          theme.segmentedButtonTheme.style,
+        ]) {
+          final size = style!.minimumSize!.resolve(<WidgetState>{});
+          expect(size!.height, greaterThanOrEqualTo(AppTheme.minTouchTarget));
+        }
       });
     });
   }

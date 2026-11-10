@@ -1,5 +1,6 @@
 import 'package:cash_client/auth/session_manager.dart';
 import 'package:cash_client/main.dart';
+import 'package:cash_client/settings/theme_controller.dart';
 import 'package:cash_client/theme/app_status_colors.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -7,82 +8,148 @@ import 'package:flutter_test/flutter_test.dart';
 import 'support/fakes.dart';
 
 void main() {
-  Future<SessionManager> pumpApp(
+  late SessionManager sessions;
+  late ThemeController theme;
+
+  Future<void> pumpApp(
     WidgetTester tester, {
     MemorySessionStore? store,
     FakeRefreshApi? backend,
+    ThemeMode? savedTheme,
   }) async {
-    final sessions = SessionManager(
+    sessions = SessionManager(
       api: (backend ?? FakeRefreshApi(FakeRefreshApi.issues('new'))).api,
       store: store ?? MemorySessionStore(),
     );
-    await tester.pumpWidget(CashClientApp(sessions: sessions));
+    theme = ThemeController(MemoryThemeModeStore(savedTheme));
+    await theme.load();
+    await tester.pumpWidget(CashClientApp(sessions: sessions, theme: theme));
     await sessions.restore();
     await tester.pumpAndSettle();
-    return sessions;
   }
 
-  testWidgets('opens at sign-in when no session is stored', (tester) async {
-    await pumpApp(tester);
-    expect(find.byKey(const Key('login.submit')), findsOneWidget);
-  });
+  Brightness brightnessAt(WidgetTester tester, Finder finder) =>
+      Theme.of(tester.element(finder)).brightness;
 
-  testWidgets('a stored collector session skips sign-in', (tester) async {
-    await pumpApp(tester, store: MemorySessionStore(collectorSession));
-    expect(find.text('Signed in as KOFI MENSAH'), findsOneWidget);
-  });
-
-  testWidgets('signing out returns to sign-in without a notice',
-      (tester) async {
-    final store = MemorySessionStore(collectorSession);
-    await pumpApp(tester, store: store);
-
-    await tester.tap(find.byKey(const Key('home.signOut')));
-    await tester.pumpAndSettle();
-
-    expect(store.session, isNull);
-    expect(find.byKey(const Key('login.submit')), findsOneWidget);
-    expect(find.byKey(const Key('login.notice')), findsNothing);
-  });
-
-  testWidgets('when the backend ends the session, the app returns to sign-in '
-      'and says why', (tester) async {
-    final backend = FakeRefreshApi(FakeRefreshApi.refuses());
-    final sessions = await pumpApp(
-      tester,
-      store: MemorySessionStore(collectorSession),
-      backend: backend,
-    );
-    expect(find.text('Signed in as KOFI MENSAH'), findsOneWidget);
-
-    // What the authenticated client does when a request's refresh is refused.
-    await expectLater(sessions.refreshAccessToken(), throwsException);
-    await tester.pumpAndSettle();
-
-    expect(find.byKey(const Key('login.submit')), findsOneWidget);
-    expect(find.byKey(const Key('login.notice')), findsOneWidget);
-  });
-
-  testWidgets('follows the device into dark mode', (tester) async {
-    tester.platformDispatcher.platformBrightnessTestValue = Brightness.dark;
+  void setDeviceBrightness(WidgetTester tester, Brightness brightness) {
+    tester.platformDispatcher.platformBrightnessTestValue = brightness;
     addTearDown(tester.platformDispatcher.clearPlatformBrightnessTestValue);
+  }
 
-    await pumpApp(tester);
+  group('sign-in', () {
+    testWidgets('opens at sign-in when no session is stored', (tester) async {
+      await pumpApp(tester);
+      expect(find.byKey(const Key('login.submit')), findsOneWidget);
+    });
 
-    final context = tester.element(find.byKey(const Key('login.submit')));
-    expect(Theme.of(context).brightness, Brightness.dark);
-    expect(AppStatusColors.of(context).success, AppStatusColors.dark.success);
+    testWidgets('a stored collector session skips sign-in', (tester) async {
+      await pumpApp(tester, store: MemorySessionStore(collectorSession));
+      expect(find.text('Signed in as KOFI MENSAH'), findsOneWidget);
+    });
+
+    testWidgets('signing out returns to sign-in without a notice',
+        (tester) async {
+      final store = MemorySessionStore(collectorSession);
+      await pumpApp(tester, store: store);
+
+      await tester.tap(find.byKey(const Key('home.signOut')));
+      await tester.pumpAndSettle();
+
+      expect(store.session, isNull);
+      expect(find.byKey(const Key('login.submit')), findsOneWidget);
+      expect(find.byKey(const Key('login.notice')), findsNothing);
+    });
+
+    testWidgets('when the backend ends the session, the app returns to '
+        'sign-in and says why', (tester) async {
+      await pumpApp(
+        tester,
+        store: MemorySessionStore(collectorSession),
+        backend: FakeRefreshApi(FakeRefreshApi.refuses()),
+      );
+      expect(find.text('Signed in as KOFI MENSAH'), findsOneWidget);
+
+      // What the authenticated client does when a refresh is refused.
+      await expectLater(sessions.refreshAccessToken(), throwsException);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('login.submit')), findsOneWidget);
+      expect(find.byKey(const Key('login.notice')), findsOneWidget);
+    });
   });
 
-  testWidgets('uses the light theme on a light device', (tester) async {
-    tester.platformDispatcher.platformBrightnessTestValue = Brightness.light;
-    addTearDown(tester.platformDispatcher.clearPlatformBrightnessTestValue);
+  group('settings', () {
+    testWidgets('opens from the home screen', (tester) async {
+      await pumpApp(tester, store: MemorySessionStore(collectorSession));
 
-    await pumpApp(tester);
+      await tester.tap(find.byKey(const Key('home.settings')));
+      await tester.pumpAndSettle();
 
-    final context = tester.element(find.byKey(const Key('login.submit')));
-    expect(Theme.of(context).brightness, Brightness.light);
-    expect(
-        AppStatusColors.of(context).success, AppStatusColors.light.success);
+      expect(find.byKey(const Key('settings.themeMode')), findsOneWidget);
+    });
+
+    testWidgets('choosing dark switches the whole app, even on a light phone',
+        (tester) async {
+      setDeviceBrightness(tester, Brightness.light);
+      await pumpApp(tester, store: MemorySessionStore(collectorSession));
+      await tester.tap(find.byKey(const Key('home.settings')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Dark'));
+      await tester.pumpAndSettle();
+
+      expect(brightnessAt(tester, find.byKey(const Key('settings.themeMode'))),
+          Brightness.dark);
+    });
+
+    testWidgets('a session that ends while settings is open closes it',
+        (tester) async {
+      await pumpApp(
+        tester,
+        store: MemorySessionStore(collectorSession),
+        backend: FakeRefreshApi(FakeRefreshApi.refuses()),
+      );
+      await tester.tap(find.byKey(const Key('home.settings')));
+      await tester.pumpAndSettle();
+
+      await expectLater(sessions.refreshAccessToken(), throwsException);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('settings.themeMode')), findsNothing);
+      expect(find.byKey(const Key('login.notice')), findsOneWidget);
+    });
+  });
+
+  group('theme', () {
+    testWidgets('follows the device into dark mode by default',
+        (tester) async {
+      setDeviceBrightness(tester, Brightness.dark);
+      await pumpApp(tester);
+
+      final submit = find.byKey(const Key('login.submit'));
+      expect(brightnessAt(tester, submit), Brightness.dark);
+      expect(AppStatusColors.of(tester.element(submit)).success,
+          AppStatusColors.dark.success);
+    });
+
+    testWidgets('uses the light theme on a light device by default',
+        (tester) async {
+      setDeviceBrightness(tester, Brightness.light);
+      await pumpApp(tester);
+
+      final submit = find.byKey(const Key('login.submit'));
+      expect(brightnessAt(tester, submit), Brightness.light);
+      expect(AppStatusColors.of(tester.element(submit)).success,
+          AppStatusColors.light.success);
+    });
+
+    testWidgets('a saved light choice wins over a dark phone',
+        (tester) async {
+      setDeviceBrightness(tester, Brightness.dark);
+      await pumpApp(tester, savedTheme: ThemeMode.light);
+
+      expect(brightnessAt(tester, find.byKey(const Key('login.submit'))),
+          Brightness.light);
+    });
   });
 }

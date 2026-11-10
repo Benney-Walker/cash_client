@@ -149,6 +149,12 @@ abstract final class AppTheme {
           borderSide: BorderSide(color: scheme.primary, width: 2),
         ),
       ),
+      segmentedButtonTheme: const SegmentedButtonThemeData(
+        style: ButtonStyle(
+          // Material's default is 40dp, below the field-use minimum.
+          minimumSize: WidgetStatePropertyAll(Size(0, minTouchTarget)),
+        ),
+      ),
       dividerTheme: DividerThemeData(color: scheme.outlineVariant, space: 1),
       snackBarTheme: const SnackBarThemeData(behavior: SnackBarBehavior.floating),
     );

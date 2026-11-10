@@ -8,8 +8,8 @@ The app is a client of the `bankingbackend` Spring Boot API. It holds no busines
 
 | Area | State |
 |---|---|
-| Light and dark theme (Indigo Aurora palette) | Done. Follows the phone's light/dark setting |
-| In-app theme choice (system / light / dark) | Planned with the settings screen |
+| Light and dark theme (Indigo Aurora palette) | Done |
+| Settings screen with the theme choice (system / light / dark) | Done |
 | Sign-in (collectors only) and sign-out | Done. Tokens kept in secure storage |
 | Automatic token refresh; back to sign-in when the backend ends the session | Done |
 | One device per collector | Not started. Waiting on backend decision D36 |
@@ -24,7 +24,7 @@ The app is a client of the `bankingbackend` Spring Boot API. It holds no busines
 ## Requirements
 
 - Flutter SDK with Dart `^3.12.0` (see `pubspec.yaml`)
-- Android SDK for device builds. Android package: `com.bynexlabs.cash_client`. Minimum Android 6.0 (API 23), required by `flutter_secure_storage`
+- Android SDK for device builds. Android package: `com.bynexlabs.cash_client`. Minimum Android 7.0 (API 24), required by `shared_preferences` (`flutter_secure_storage` needs 6.0)
 - A running `bankingbackend`
 
 ## Run and test
@@ -62,6 +62,16 @@ Calls to protected endpoints go through `AuthenticatedClient` (`lib/api/authenti
 - If the refresh can't reach the server, the session is kept, so a collector isn't signed out for being offline.
 - A 403 is passed straight through. It means the role isn't allowed, and a new token wouldn't change that.
 - Multipart and streamed requests can't be replayed: on a 401 they still trigger a refresh, but the caller gets the 401 and has to retry.
+
+## Settings
+
+Opened from the gear icon on the home screen. For now it has one setting:
+
+- **Appearance:** System (follow the phone, the default), Light or Dark. The change applies straight away and is saved on the phone with `shared_preferences`, then read before the first frame at launch so the app doesn't flash the wrong theme. It's a phone setting, not tied to the collector, so it stays after sign-out.
+
+Code: `lib/settings/` (`settings_screen.dart`, `theme_controller.dart`, `theme_mode_store.dart`).
+
+If the session ends while settings (or any later screen) is open, the app closes those screens and goes back to sign-in.
 
 ## Theme
 

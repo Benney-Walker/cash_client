@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'package:cash_client/auth/auth_api.dart';
 import 'package:cash_client/auth/auth_session.dart';
 import 'package:cash_client/auth/session_store.dart';
+import 'package:cash_client/settings/theme_mode_store.dart';
+import 'package:flutter/material.dart' show ThemeMode;
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
@@ -106,4 +108,22 @@ class FakeRefreshApi {
 
   static (int, String) refuses() =>
       (401, errorBody(401, 'Invalid refresh token'));
+}
+
+/// In-memory [ThemeModeStore] for tests. Set [failSaves] to make every save
+/// throw.
+class MemoryThemeModeStore implements ThemeModeStore {
+  MemoryThemeModeStore([this.mode]);
+
+  ThemeMode? mode;
+  bool failSaves = false;
+
+  @override
+  Future<ThemeMode?> read() async => mode;
+
+  @override
+  Future<void> save(ThemeMode mode) async {
+    if (failSaves) throw StateError('disk full');
+    this.mode = mode;
+  }
 }
