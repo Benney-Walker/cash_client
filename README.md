@@ -9,7 +9,8 @@ The app is a client of the `bankingbackend` Spring Boot API. It holds no busines
 | Area | State |
 |---|---|
 | Light and dark theme (Indigo Aurora palette) | Done |
-| Settings screen with the theme choice (system / light / dark) | Done |
+| Home screen layout and bottom bar (Home, History, Settings) | Done. Shows an empty day until the backend endpoints exist |
+| Settings: theme choice (system / light / dark) and sign-out | Done |
 | Sign-in (collectors only) and sign-out | Done. Tokens kept in secure storage |
 | Automatic token refresh; back to sign-in when the backend ends the session | Done |
 | One device per collector | Not started. Waiting on backend decision D36 |
@@ -18,7 +19,7 @@ The app is a client of the `bankingbackend` Spring Boot API. It holds no busines
 | Corrections within 10 minutes | Not started. Needs backend support |
 | Withdrawal requests | Not started. Needs backend support |
 | Location tracking | Not started. Needs backend support |
-| Transaction history | Not started |
+| Transaction history | Screen in place, empty. Needs backend support |
 | Daily cash submission and session ending | Not started. Needs backend support |
 
 ## Requirements
@@ -50,7 +51,7 @@ Debug builds may use plain `http` so a local backend works. Release builds use A
 - On launch, a stored session skips sign-in, so a collector stays signed in until they sign out or the backend ends the session.
 - Signing out only forgets the tokens on the phone; the backend has no logout endpoint yet. The tokens stay valid until they expire. Their lifetimes are set by the backend's `JWT_ACCESS_EXPIRATION` and `JWT_REFRESH_EXPIRATION`.
 
-Code: `lib/auth/` (`auth_api.dart`, `session_manager.dart`, `session_store.dart`, `login_screen.dart`, and the sign-in messages in `sign_in.dart`), the error mapping in `lib/api/api_exception.dart`, and the sign-in/home switch in `lib/main.dart`. After sign-in the app shows a placeholder until the home screen exists.
+Code: `lib/auth/` (`auth_api.dart`, `session_manager.dart`, `session_store.dart`, `login_screen.dart`, and the sign-in messages in `sign_in.dart`), the error mapping in `lib/api/api_exception.dart`, and the sign-in/home switch in `lib/main.dart`.
 
 ## Token refresh
 
@@ -63,15 +64,27 @@ Calls to protected endpoints go through `AuthenticatedClient` (`lib/api/authenti
 - A 403 is passed straight through. It means the role isn't allowed, and a new token wouldn't change that.
 - Multipart and streamed requests can't be replayed: on a 401 they still trigger a refresh, but the caller gets the 401 and has to retry.
 
+## Home screen
+
+After sign-in, a bottom bar switches between Home, History and Settings (`lib/home/home_shell.dart`). The tabs stay alive, so switching keeps each tab's scroll position.
+
+Home (`lib/home/home_screen.dart`), design A as approved:
+
+- A greeting for the time of day and the collector's name, shown in normal case (the backend sends it in upper case).
+- Today's collections on the hero gradient: total, number of records and, later, how many are waiting to send.
+- **Record deposit** and **Withdrawal** side by side, with **Submit today's collections** full width beneath them.
+- **Recent** records, with **See all** opening the History tab.
+
+None of this has backend data yet. Today's total shows GH₵ 0.00 and the recent list shows "No collections recorded today". The three action buttons stay enabled and show a short message saying the feature isn't available yet, rather than being greyed out with no reason. History (`lib/home/history_screen.dart`) shows an empty state.
+
+If the session ends while a screen is open on top of the tabs (such as the future deposit screens), the app closes it and goes back to sign-in.
+
 ## Settings
 
-Opened from the gear icon on the home screen. For now it has one setting:
+The Settings tab (`lib/settings/`):
 
 - **Appearance:** System (follow the phone, the default), Light or Dark. The change applies straight away and is saved on the phone with `shared_preferences`, then read before the first frame at launch so the app doesn't flash the wrong theme. It's a phone setting, not tied to the collector, so it stays after sign-out.
-
-Code: `lib/settings/` (`settings_screen.dart`, `theme_controller.dart`, `theme_mode_store.dart`).
-
-If the session ends while settings (or any later screen) is open, the app closes those screens and goes back to sign-in.
+- **Account:** the signed-in collector's name and staff ID, and **Sign out**.
 
 ## Theme
 

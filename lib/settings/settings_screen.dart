@@ -1,11 +1,23 @@
 import 'package:flutter/material.dart';
 
+import '../common/names.dart';
 import 'theme_controller.dart';
 
 class SettingsScreen extends StatelessWidget {
-  const SettingsScreen({super.key, required this.theme});
+  const SettingsScreen({
+    super.key,
+    required this.theme,
+    required this.staffId,
+    required this.staffName,
+    required this.onSignOut,
+  });
 
   final ThemeController theme;
+  final String staffId;
+
+  /// As the backend returns it, which is upper case.
+  final String staffName;
+  final VoidCallback onSignOut;
 
   @override
   Widget build(BuildContext context) {
@@ -57,6 +69,26 @@ class SettingsScreen extends StatelessWidget {
                 ),
               ],
             ),
+          ),
+          const SizedBox(height: 32),
+          Text('Account', style: textTheme.titleMedium),
+          const SizedBox(height: 12),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.badge_outlined),
+              title: Text(
+                displayName(staffName),
+                key: const Key('settings.staffName'),
+              ),
+              subtitle: Text('Staff ID $staffId'),
+            ),
+          ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            key: const Key('settings.signOut'),
+            onPressed: onSignOut,
+            icon: const Icon(Icons.logout),
+            label: const Text('Sign out'),
           ),
         ],
       ),

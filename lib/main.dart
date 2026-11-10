@@ -1,12 +1,11 @@
 import 'package:flutter/material.dart';
 
 import 'auth/auth_api.dart';
-import 'auth/auth_session.dart';
 import 'auth/login_screen.dart';
 import 'auth/session_manager.dart';
 import 'auth/session_store.dart';
 import 'config/app_config.dart';
-import 'settings/settings_screen.dart';
+import 'home/home_shell.dart';
 import 'settings/theme_controller.dart';
 import 'settings/theme_mode_store.dart';
 import 'theme/app_theme.dart';
@@ -87,8 +86,8 @@ class _AuthGateState extends State<AuthGate> {
 
   void _onSessionChanged() {
     // This widget is the bottom screen, so swapping it to the login screen
-    // isn't enough when other screens (settings, and later deposits) are
-    // open on top. Close them, so a collector whose session ended can't
+    // isn't enough when other screens (later, the deposit screens) are open
+    // on top. Close them, so a collector whose session ended can't
     // keep using a screen that's still showing.
     if (widget.sessions.session == null && mounted) {
       Navigator.of(context).popUntil((route) => route.isFirst);
@@ -108,63 +107,12 @@ class _AuthGateState extends State<AuthGate> {
         }
         final session = sessions.session;
         if (session == null) return LoginScreen(sessions: sessions);
-        return _SignedInPlaceholder(
+        return HomeShell(
           session: session,
-          onOpenSettings: () => Navigator.of(context).push(
-            MaterialPageRoute<void>(
-              builder: (_) => SettingsScreen(theme: widget.theme),
-            ),
-          ),
+          theme: widget.theme,
           onSignOut: sessions.signOut,
         );
       },
-    );
-  }
-}
-
-/// Stands in for the collector's home screen, which comes in a later step.
-class _SignedInPlaceholder extends StatelessWidget {
-  const _SignedInPlaceholder({
-    required this.session,
-    required this.onOpenSettings,
-    required this.onSignOut,
-  });
-
-  final AuthSession session;
-  final VoidCallback onOpenSettings;
-  final VoidCallback onSignOut;
-
-  @override
-  Widget build(BuildContext context) {
-    final textTheme = Theme.of(context).textTheme;
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Cash Client'),
-        actions: [
-          IconButton(
-            key: const Key('home.settings'),
-            tooltip: 'Settings',
-            icon: const Icon(Icons.settings_outlined),
-            onPressed: onOpenSettings,
-          ),
-          IconButton(
-            key: const Key('home.signOut'),
-            tooltip: 'Sign out',
-            icon: const Icon(Icons.logout),
-            onPressed: onSignOut,
-          ),
-        ],
-      ),
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Text(
-            'Signed in as ${session.staffName}',
-            textAlign: TextAlign.center,
-            style: textTheme.titleMedium,
-          ),
-        ),
-      ),
     );
   }
 }

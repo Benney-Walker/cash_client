@@ -9,13 +9,23 @@ import '../support/fakes.dart';
 void main() {
   late MemoryThemeModeStore store;
   late ThemeController theme;
+  late int signOuts;
 
   Future<void> pumpSettings(WidgetTester tester, {ThemeMode? saved}) async {
     store = MemoryThemeModeStore(saved);
     theme = ThemeController(store);
+    signOuts = 0;
     await theme.load();
     await tester.pumpWidget(
-      MaterialApp(theme: AppTheme.light, home: SettingsScreen(theme: theme)),
+      MaterialApp(
+        theme: AppTheme.light,
+        home: SettingsScreen(
+          theme: theme,
+          staffId: 'STF001',
+          staffName: 'KOFI MENSAH',
+          onSignOut: () => signOuts++,
+        ),
+      ),
     );
   }
 
@@ -63,5 +73,22 @@ void main() {
       expect(tester.getSize(segment.first).height,
           greaterThanOrEqualTo(AppTheme.minTouchTarget));
     }
+  });
+
+  testWidgets('shows who is signed in, in normal case', (tester) async {
+    await pumpSettings(tester);
+
+    expect(find.text('Kofi Mensah'), findsOneWidget);
+    expect(find.text('Staff ID STF001'), findsOneWidget);
+  });
+
+  testWidgets('sign out calls back', (tester) async {
+    await pumpSettings(tester);
+    final signOut = find.byKey(const Key('settings.signOut'));
+
+    await tester.ensureVisible(signOut);
+    await tester.tap(signOut);
+
+    expect(signOuts, 1);
   });
 }

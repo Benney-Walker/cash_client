@@ -1,4 +1,5 @@
 import 'package:cash_client/auth/session_manager.dart';
+import 'package:cash_client/home/home_shell.dart';
 import 'package:cash_client/main.dart';
 import 'package:cash_client/settings/theme_controller.dart';
 import 'package:cash_client/theme/app_status_colors.dart';
@@ -31,6 +32,13 @@ void main() {
   Brightness brightnessAt(WidgetTester tester, Finder finder) =>
       Theme.of(tester.element(finder)).brightness;
 
+  Future<void> tapKey(WidgetTester tester, String key) async {
+    final target = find.byKey(Key(key));
+    await tester.ensureVisible(target);
+    await tester.tap(target);
+    await tester.pumpAndSettle();
+  }
+
   void setDeviceBrightness(WidgetTester tester, Brightness brightness) {
     tester.platformDispatcher.platformBrightnessTestValue = brightness;
     addTearDown(tester.platformDispatcher.clearPlatformBrightnessTestValue);
@@ -42,18 +50,20 @@ void main() {
       expect(find.byKey(const Key('login.submit')), findsOneWidget);
     });
 
-    testWidgets('a stored collector session skips sign-in', (tester) async {
+    testWidgets('a stored collector session opens on the home tab',
+        (tester) async {
       await pumpApp(tester, store: MemorySessionStore(collectorSession));
-      expect(find.text('Signed in as KOFI MENSAH'), findsOneWidget);
+      expect(find.byKey(const Key('home.staffName')), findsOneWidget);
+      expect(find.text('Kofi Mensah'), findsOneWidget);
     });
 
-    testWidgets('signing out returns to sign-in without a notice',
-        (tester) async {
+    testWidgets('signing out from settings returns to sign-in without a '
+        'notice', (tester) async {
       final store = MemorySessionStore(collectorSession);
       await pumpApp(tester, store: store);
 
-      await tester.tap(find.byKey(const Key('home.signOut')));
-      await tester.pumpAndSettle();
+      await tapKey(tester, 'nav.settings');
+      await tapKey(tester, 'settings.signOut');
 
       expect(store.session, isNull);
       expect(find.byKey(const Key('login.submit')), findsOneWidget);
@@ -67,7 +77,7 @@ void main() {
         store: MemorySessionStore(collectorSession),
         backend: FakeRefreshApi(FakeRefreshApi.refuses()),
       );
-      expect(find.text('Signed in as KOFI MENSAH'), findsOneWidget);
+      expect(find.byKey(const Key('home.staffName')), findsOneWidget);
 
       // What the authenticated client does when a refresh is refused.
       await expectLater(sessions.refreshAccessToken(), throwsException);
@@ -78,45 +88,66 @@ void main() {
     });
   });
 
-  group('settings', () {
-    testWidgets('opens from the home screen', (tester) async {
-      await pumpApp(tester, store: MemorySessionStore(collectorSession));
-
-      await tester.tap(find.byKey(const Key('home.settings')));
-      await tester.pumpAndSettle();
-
-      expect(find.byKey(const Key('settings.themeMode')), findsOneWidget);
-    });
-
-    testWidgets('choosing dark switches the whole app, even on a light phone',
+  group('navigation', () {
+    testWidgets('the bottom bar switches between home, history and settings',
         (tester) async {
-      setDeviceBrightness(tester, Brightness.light);
       await pumpApp(tester, store: MemorySessionStore(collectorSession));
-      await tester.tap(find.byKey(const Key('home.settings')));
-      await tester.pumpAndSettle();
 
-      await tester.tap(find.text('Dark'));
-      await tester.pumpAndSettle();
+      await tapKey(tester, 'nav.history');
+      expect(find.byKey(const Key('history.empty')), findsOneWidget);
+      expect(find.byKey(const Key('home.staffName')), findsNothing);
 
-      expect(brightnessAt(tester, find.byKey(const Key('settings.themeMode'))),
-          Brightness.dark);
+      await tapKey(tester, 'nav.settings');
+      expect(find.byKey(const Key('settings.themeMode')), findsOneWidget);
+
+      await tapKey(tester, 'nav.home');
+      expect(find.byKey(const Key('home.staffName')), findsOneWidget);
     });
 
-    testWidgets('a session that ends while settings is open closes it',
+    testWidgets('See all on home opens the history tab', (tester) async {
+      await pumpApp(tester, store: MemorySessionStore(collectorSession));
+
+      await tapKey(tester, 'home.seeAll');
+
+      expect(find.byKey(const Key('history.empty')), findsOneWidget);
+    });
+
+    testWidgets('a session that ends closes screens opened on top of home',
         (tester) async {
       await pumpApp(
         tester,
         store: MemorySessionStore(collectorSession),
         backend: FakeRefreshApi(FakeRefreshApi.refuses()),
       );
-      await tester.tap(find.byKey(const Key('home.settings')));
+      // Stands in for a later screen, such as recording a deposit.
+      Navigator.of(tester.element(find.byType(HomeShell))).push(
+        MaterialPageRoute<void>(
+          builder: (_) => const Scaffold(body: Text('Pushed screen')),
+        ),
+      );
       await tester.pumpAndSettle();
+      expect(find.text('Pushed screen'), findsOneWidget);
 
       await expectLater(sessions.refreshAccessToken(), throwsException);
       await tester.pumpAndSettle();
 
-      expect(find.byKey(const Key('settings.themeMode')), findsNothing);
+      expect(find.text('Pushed screen'), findsNothing);
       expect(find.byKey(const Key('login.notice')), findsOneWidget);
+    });
+  });
+
+  group('settings', () {
+    testWidgets('choosing dark switches the whole app, even on a light phone',
+        (tester) async {
+      setDeviceBrightness(tester, Brightness.light);
+      await pumpApp(tester, store: MemorySessionStore(collectorSession));
+      await tapKey(tester, 'nav.settings');
+
+      await tester.tap(find.text('Dark'));
+      await tester.pumpAndSettle();
+
+      expect(brightnessAt(tester, find.byKey(const Key('settings.themeMode'))),
+          Brightness.dark);
     });
   });
 
