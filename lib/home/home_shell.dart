@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../auth/auth_session.dart';
+import '../settings/app_info.dart';
 import '../settings/settings_screen.dart';
 import '../settings/theme_controller.dart';
 import 'history_screen.dart';
@@ -15,11 +16,13 @@ class HomeShell extends StatefulWidget {
     super.key,
     required this.session,
     required this.theme,
+    required this.appInfo,
     required this.onSignOut,
   });
 
   final AuthSession session;
   final ThemeController theme;
+  final AppInfo appInfo;
   final VoidCallback onSignOut;
 
   @override
@@ -49,6 +52,7 @@ class _HomeShellState extends State<HomeShell> {
             theme: widget.theme,
             staffId: widget.session.staffId,
             staffName: widget.session.staffName,
+            appInfo: widget.appInfo,
             onSignOut: widget.onSignOut,
           ),
         ],

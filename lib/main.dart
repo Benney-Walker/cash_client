@@ -126,6 +126,7 @@ class _AuthGateState extends State<AuthGate> {
         return HomeShell(
           session: session,
           theme: widget.theme,
+          appInfo: widget.appInfo,
           onSignOut: sessions.signOut,
         );
       },

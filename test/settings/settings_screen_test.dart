@@ -1,3 +1,6 @@
+import 'package:cash_client/common/glass_card.dart';
+import 'package:cash_client/common/gradient_wash.dart';
+import 'package:cash_client/common/initials_avatar.dart';
 import 'package:cash_client/settings/settings_screen.dart';
 import 'package:cash_client/settings/theme_controller.dart';
 import 'package:cash_client/theme/app_theme.dart';
@@ -23,6 +26,7 @@ void main() {
           theme: theme,
           staffId: 'STF001',
           staffName: 'KOFI MENSAH',
+          appInfo: testAppInfo,
           onSignOut: () => signOuts++,
         ),
       ),
@@ -79,7 +83,7 @@ void main() {
     await pumpSettings(tester);
 
     expect(find.text('Kofi Mensah'), findsOneWidget);
-    expect(find.text('Staff ID STF001'), findsOneWidget);
+    expect(find.text('Staff ID STF001 · Collector'), findsOneWidget);
   });
 
   testWidgets('sign out calls back', (tester) async {
@@ -90,5 +94,65 @@ void main() {
     await tester.tap(signOut);
 
     expect(signOuts, 1);
+  });
+
+  testWidgets('the profile sits on a glass card in the wash header, with '
+      'initials', (tester) async {
+    await pumpSettings(tester);
+
+    for (final key in ['settings.staffName', 'settings.staffId']) {
+      expect(
+        find.descendant(
+          of: find.byType(GlassCard),
+          matching: find.byKey(Key(key)),
+        ),
+        findsOneWidget,
+      );
+    }
+    expect(
+      find.descendant(
+        of: find.byType(GradientWash),
+        matching: find.byType(InitialsAvatar),
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('KM'), findsOneWidget);
+  });
+
+  testWidgets('the About card shows the installed version', (tester) async {
+    await pumpSettings(tester);
+    final version = find.byKey(const Key('settings.version'));
+
+    await tester.ensureVisible(version);
+
+    expect(find.text('1.0.0 (build 1)'), findsOneWidget);
+  });
+
+  testWidgets('fits a 360dp phone without overflow, in both themes',
+      (tester) async {
+    tester.view.physicalSize = const Size(1080, 2340);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+
+    for (final mode in [ThemeMode.light, ThemeMode.dark]) {
+      theme = ThemeController(MemoryThemeModeStore(mode));
+      await theme.load();
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.light,
+          darkTheme: AppTheme.dark,
+          themeMode: mode,
+          home: SettingsScreen(
+            theme: theme,
+            staffId: 'STF001',
+            staffName: 'KOFI MENSAH',
+            appInfo: testAppInfo,
+            onSignOut: () {},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    }
   });
 }

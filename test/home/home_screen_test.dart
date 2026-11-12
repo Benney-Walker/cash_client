@@ -50,6 +50,13 @@ void main() {
     expect(displayName(''), '');
   });
 
+  test('initials use the first and last names', () {
+    expect(initials('KOFI MENSAH'), 'KM');
+    expect(initials('AMA SERWAA OWUSU'), 'AO');
+    expect(initials('efua'), 'E');
+    expect(initials('  '), '?');
+  });
+
   testWidgets('greets the collector and shows an empty day', (tester) async {
     await pumpHome(tester, now: DateTime(2026, 11, 10, 14));
 

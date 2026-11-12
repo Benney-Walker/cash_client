@@ -9,9 +9,9 @@ The app is a client of the `bankingbackend` Spring Boot API. It holds no busines
 | Area | State |
 |---|---|
 | Light and dark theme (Indigo Aurora palette, lighter gradient tints, Inter font) | Done |
-| Redesign with the lighter tints (12 Nov 2026) | Sign-in, Home and History done. Settings next, after you pick a design |
+| Redesign with the lighter tints (12 Nov 2026) | Done for every screen: sign-in, Home, History and Settings |
 | Home screen layout and bottom bar (Home, History, Settings) | Done. Shows an empty day until the backend endpoints exist |
-| Settings: theme choice (system / light / dark) and sign-out | Done |
+| Settings: profile, theme choice (system / light / dark), app version and sign-out | Done |
 | Sign-in (collectors only) and sign-out | Done. Tokens kept in secure storage |
 | Automatic token refresh; back to sign-in when the backend ends the session | Done |
 | One device per collector | Not started. Waiting on backend decision D36 |
@@ -92,10 +92,12 @@ If the session ends while a screen is open on top of the tabs (such as the futur
 
 ## Settings
 
-The Settings tab (`lib/settings/`):
+The Settings tab (`lib/settings/`), design S1, "profile header" (12 Nov 2026):
 
+- **Profile:** the same wash header as home and history, with the collector's initials (on the button gradient, like the desktop app's "CC" mark), name and "Staff ID … · Collector" on a glass card.
 - **Appearance:** System (follow the phone, the default), Light or Dark. The change applies straight away and is saved on the phone with `shared_preferences`, then read before the first frame at launch so the app doesn't flash the wrong theme. It's a phone setting, not tied to the collector, so it stays after sign-out.
-- **Account:** the signed-in collector's name and staff ID, and **Sign out**.
+- **About:** the installed app version, read with `package_info_plus` (the same value as the sign-in screen's corner).
+- **Sign out**, outlined. The screen has no primary action, so no gradient button.
 
 ## Theme
 
