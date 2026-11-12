@@ -174,6 +174,16 @@ abstract final class AppTheme {
           minimumSize: WidgetStatePropertyAll(Size(0, minTouchTarget)),
         ),
       ),
+      // Selected chips (the history filters) use the soft indigo pill, as in
+      // the approved design. The pairing is in the contrast tests.
+      chipTheme: ChipThemeData(
+        selectedColor: scheme.primaryContainer,
+        checkmarkColor: scheme.onPrimaryContainer,
+        secondaryLabelStyle: TextStyle(
+          fontFamily: fontFamily,
+          color: scheme.onPrimaryContainer,
+        ),
+      ),
       dividerTheme: DividerThemeData(color: scheme.outlineVariant, space: 1),
       snackBarTheme: const SnackBarThemeData(behavior: SnackBarBehavior.floating),
     );

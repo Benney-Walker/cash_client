@@ -9,7 +9,7 @@ The app is a client of the `bankingbackend` Spring Boot API. It holds no busines
 | Area | State |
 |---|---|
 | Light and dark theme (Indigo Aurora palette, lighter gradient tints, Inter font) | Done |
-| Redesign with the lighter tints (12 Nov 2026) | Sign-in and Home done. History and Settings next, each after you pick a design |
+| Redesign with the lighter tints (12 Nov 2026) | Sign-in, Home and History done. Settings next, after you pick a design |
 | Home screen layout and bottom bar (Home, History, Settings) | Done. Shows an empty day until the backend endpoints exist |
 | Settings: theme choice (system / light / dark) and sign-out | Done |
 | Sign-in (collectors only) and sign-out | Done. Tokens kept in secure storage |
@@ -80,7 +80,13 @@ Home (`lib/home/home_screen.dart`) keeps design A's layout, restyled as design H
 - On the plain page below: **Record deposit** (the screen's one gradient button) and **Withdrawal** side by side, with **Submit today's collections** full width beneath them.
 - **Recent** records, with **See all** opening the History tab.
 
-None of this has backend data yet. Today's total shows GH₵ 0.00 and the recent list shows "No collections recorded today". The three action buttons stay enabled and show a short message saying the feature isn't available yet, rather than being greyed out with no reason. History (`lib/home/history_screen.dart`) shows an empty state.
+None of this has backend data yet. Today's total shows GH₵ 0.00 and the recent list shows "No collections recorded today". The three action buttons stay enabled and show a short message saying the feature isn't available yet, rather than being greyed out with no reason.
+
+History (`lib/home/history_screen.dart`), design Y1, "wash header" (12 Nov 2026):
+
+- The same wash header as home (`lib/common/wash_header.dart`), with the title and today's record count and total on a glass strip.
+- Filter chips on the plain page: All, Deposits, Shares, Withdrawals. The selected chip uses the soft indigo pill (set in the theme's `chipTheme`).
+- Until the backend can list a collector's records, the count and total show zero and the list shows an empty state that names the selected filter ("No share payments yet"). Which record types each filter matches will follow the backend's transaction types.
 
 If the session ends while a screen is open on top of the tabs (such as the future deposit screens), the app closes it and goes back to sign-in.
 

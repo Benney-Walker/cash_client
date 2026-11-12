@@ -3,7 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../common/glass_card.dart';
 import '../common/gradient_button.dart';
-import '../common/gradient_wash.dart';
+import '../common/wash_header.dart';
 import '../common/names.dart';
 import '../theme/app_gradients.dart';
 
@@ -49,7 +49,7 @@ class HomeScreen extends StatelessWidget {
         body: ListView(
           padding: EdgeInsets.zero,
           children: [
-            _WashHeader(greeting: greetingFor(now()), name: staffName),
+            _HomeHeader(greeting: greetingFor(now()), name: staffName),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
               child: Column(
@@ -143,8 +143,8 @@ String greetingFor(DateTime time) {
 }
 
 /// The wash across the top: greeting, name and today's total.
-class _WashHeader extends StatelessWidget {
-  const _WashHeader({required this.greeting, required this.name});
+class _HomeHeader extends StatelessWidget {
+  const _HomeHeader({required this.greeting, required this.name});
 
   final String greeting;
   final String name;
@@ -153,35 +153,30 @@ class _WashHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final gradients = AppGradients.of(context);
     final textTheme = Theme.of(context).textTheme;
-    final topInset = MediaQuery.paddingOf(context).top;
 
-    return GradientWash(
-      borderRadius: const BorderRadius.vertical(bottom: Radius.circular(24)),
-      child: Padding(
-        padding: EdgeInsets.fromLTRB(16, topInset + 12, 16, 16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // On the open wash the lighter secondary tone is readable
-            // (at least 5:1); on the glass card below it isn't, so the card
-            // uses panelText throughout.
-            Text(
-              greeting,
-              style: textTheme.bodyMedium
-                  ?.copyWith(color: gradients.panelTextSecondary),
+    return WashHeader(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // On the open wash the lighter secondary tone is readable (at
+          // least 5:1); on the glass card below it isn't, so the card uses
+          // panelText throughout.
+          Text(
+            greeting,
+            style: textTheme.bodyMedium
+                ?.copyWith(color: gradients.panelTextSecondary),
+          ),
+          Text(
+            displayName(name),
+            key: const Key('home.staffName'),
+            style: textTheme.titleLarge?.copyWith(
+              color: gradients.panelText,
+              fontWeight: FontWeight.w600,
             ),
-            Text(
-              displayName(name),
-              key: const Key('home.staffName'),
-              style: textTheme.titleLarge?.copyWith(
-                color: gradients.panelText,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 12),
-            const _TodayCard(),
-          ],
-        ),
+          ),
+          const SizedBox(height: 12),
+          const _TodayCard(),
+        ],
       ),
     );
   }
