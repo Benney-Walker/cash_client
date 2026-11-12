@@ -8,7 +8,8 @@ The app is a client of the `bankingbackend` Spring Boot API. It holds no busines
 
 | Area | State |
 |---|---|
-| Light and dark theme (Indigo Aurora palette) | Done |
+| Light and dark theme (Indigo Aurora palette, lighter gradient tints, Inter font) | Done |
+| Redesign with the lighter tints (12 Nov 2026) | Sign-in done. Home, History and Settings next, each after you pick a design |
 | Home screen layout and bottom bar (Home, History, Settings) | Done. Shows an empty day until the backend endpoints exist |
 | Settings: theme choice (system / light / dark) and sign-out | Done |
 | Sign-in (collectors only) and sign-out | Done. Tokens kept in secure storage |
@@ -44,6 +45,10 @@ Debug builds may use plain `http` so a local backend works. Release builds use A
 `test/theme/app_theme_test.dart` checks every text/background colour pairing in both modes against WCAG AA (4.5:1), plus the input outline (3:1) and the 48dp touch target. If you change a colour and a test fails, the colour is the problem, not the test.
 
 ## Sign-in
+
+The screen is design option 2, "glass card": the pale gradient wash fills the screen, with the shield-and-lock picture, "Cash Client" and "Daily collections" at the top, the form in a frosted glass card with the gradient **Sign in** button and the "Collectors only" and "Protected" labels, and "Version … · Powered by Bynex Labs" in the bottom-right corner. The version is read from the installed app with `package_info_plus` (`lib/settings/app_info.dart`).
+
+On the glass card all text uses the panel's main text colour, and in dark mode field error messages do too. The lighter secondary tone and the error reds fall below 4.5:1 on dark-mode glass where it crosses the teal glow; the field's red border still marks an error. Field labels stay inside the fields rather than floating up onto the glass.
 
 - Calls `POST /api/auth/v1/login` with `staffId` and `password`. The backend returns `staffName`, `roles`, `authToken` and `refreshToken`; a wrong ID or password, or an inactive account, returns 401.
 - The backend signs in any staff role, so the app checks for `COLLECTOR`. Anyone else sees a message pointing them to the desktop app, and their tokens are discarded, not stored. The backend still enforces permissions on every endpoint.
@@ -93,6 +98,11 @@ Code lives in `lib/theme/`:
 - `app_colors.dart`: the raw palette. Widgets shouldn't use it directly.
 - `app_theme.dart`: `AppTheme.light` and `AppTheme.dark`, plus button, card and input styling.
 - `app_status_colors.dart`: `AppStatusColors.of(context)` for status colours and the hero gradient, which have no place in Material's `ColorScheme`.
+- `app_gradients.dart`: `AppGradients.of(context)` for the lighter gradient tints shared with the desktop app (12 Nov 2026): the pale wash and its glows, the illustration gradient, glass fill and border, page glows, and the primary button gradient. The values in `app_colors.dart` are an identical copy of the desktop app's; change both or neither.
+
+Shared pieces built on them, in `lib/common/`: `GradientButton` (every primary button), `GradientWash` (the pale wash with glows) and `GlassLabel` (frosted pill).
+
+Font: Inter, bundled in `assets/fonts/inter/` (licence in `OFL.txt` there), so the app matches the desktop app on every phone.
 
 Surface roles, used the same way in both modes:
 
@@ -117,8 +127,8 @@ Design rules:
 
 - Green means success only. It's never used as a brand colour.
 - A status always shows an icon and a label, not colour alone.
-- The hero gradient is only for hero surfaces (today's collections card, login header, receipt banner). Buttons, inputs and chips are solid.
+- Every primary button uses the gradient (`GradientButton`), as in the desktop app. Other gradients are only for hero surfaces such as the sign-in wash and today's collections card. Inputs and chips are solid.
 - Amounts are neutral, not green or red: GH₵ with 2 decimals and tabular figures.
-- One primary (filled) button per screen.
+- One primary button per screen.
 - A deposit shows success only after the backend confirms it.
 - Anything tappable is at least 48dp.

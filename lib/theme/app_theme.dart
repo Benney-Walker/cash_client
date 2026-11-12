@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'app_colors.dart';
+import 'app_gradients.dart';
 import 'app_status_colors.dart';
 
 /// Light and dark [ThemeData] for the collector app.
@@ -14,6 +15,10 @@ import 'app_status_colors.dart';
 /// `surfaceContainerHigh` is a raised area such as a sheet, and
 /// `outlineVariant` is the hairline border.
 abstract final class AppTheme {
+  /// Bundled (see pubspec.yaml) so every phone shows the same font as the
+  /// desktop app.
+  static const String fontFamily = 'Inter';
+
   // Field use: thumbs, gloves, a moving tricycle. Material's 48dp minimum is
   // the floor for anything tappable.
   static const double minTouchTarget = 48;
@@ -51,6 +56,7 @@ abstract final class AppTheme {
           surfaceTint: Colors.transparent,
         ),
         AppStatusColors.light,
+        AppGradients.light,
       );
 
   static ThemeData get dark => _build(
@@ -84,9 +90,14 @@ abstract final class AppTheme {
           surfaceTint: Colors.transparent,
         ),
         AppStatusColors.dark,
+        AppGradients.dark,
       );
 
-  static ThemeData _build(ColorScheme scheme, AppStatusColors status) {
+  static ThemeData _build(
+    ColorScheme scheme,
+    AppStatusColors status,
+    AppGradients gradients,
+  ) {
     final controlShape = RoundedRectangleBorder(
       borderRadius: BorderRadius.circular(controlRadius),
     );
@@ -94,8 +105,9 @@ abstract final class AppTheme {
 
     return ThemeData(
       colorScheme: scheme,
+      fontFamily: fontFamily,
       scaffoldBackgroundColor: scheme.surface,
-      extensions: [status],
+      extensions: [status, gradients],
       appBarTheme: AppBarTheme(
         backgroundColor: scheme.surface,
         foregroundColor: scheme.onSurface,
@@ -113,11 +125,18 @@ abstract final class AppTheme {
           side: BorderSide(color: scheme.outlineVariant),
         ),
       ),
+      // A button's text style replaces the ambient one rather than merging
+      // with it, so the family has to be named here or the label would fall
+      // back to the platform font.
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
           minimumSize: buttonMinimumSize,
           shape: controlShape,
-          textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+          textStyle: const TextStyle(
+            fontFamily: fontFamily,
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+          ),
         ),
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(

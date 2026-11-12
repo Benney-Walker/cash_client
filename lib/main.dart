@@ -6,6 +6,7 @@ import 'auth/session_manager.dart';
 import 'auth/session_store.dart';
 import 'config/app_config.dart';
 import 'home/home_shell.dart';
+import 'settings/app_info.dart';
 import 'settings/theme_controller.dart';
 import 'settings/theme_mode_store.dart';
 import 'theme/app_theme.dart';
@@ -19,20 +20,27 @@ Future<void> main() async {
   // open in one theme and switch to the other.
   final theme = ThemeController(PrefsThemeModeStore());
   await theme.load();
+  final appInfo = await AppInfo.load();
 
   final sessions = SessionManager(
     api: AuthApi(baseUrl: AppConfig.apiBaseUrl),
     store: SecureSessionStore(),
   )..restore();
 
-  runApp(CashClientApp(sessions: sessions, theme: theme));
+  runApp(CashClientApp(sessions: sessions, theme: theme, appInfo: appInfo));
 }
 
 class CashClientApp extends StatelessWidget {
-  const CashClientApp({super.key, required this.sessions, required this.theme});
+  const CashClientApp({
+    super.key,
+    required this.sessions,
+    required this.theme,
+    required this.appInfo,
+  });
 
   final SessionManager sessions;
   final ThemeController theme;
+  final AppInfo appInfo;
 
   @override
   Widget build(BuildContext context) {
@@ -44,7 +52,7 @@ class CashClientApp extends StatelessWidget {
         theme: AppTheme.light,
         darkTheme: AppTheme.dark,
         themeMode: theme.mode,
-        home: AuthGate(sessions: sessions, theme: theme),
+        home: AuthGate(sessions: sessions, theme: theme, appInfo: appInfo),
       ),
     );
   }
@@ -53,10 +61,16 @@ class CashClientApp extends StatelessWidget {
 /// Shows the login screen or the signed-in app, and switches between them
 /// whenever the session changes, including when the backend ends it.
 class AuthGate extends StatefulWidget {
-  const AuthGate({super.key, required this.sessions, required this.theme});
+  const AuthGate({
+    super.key,
+    required this.sessions,
+    required this.theme,
+    required this.appInfo,
+  });
 
   final SessionManager sessions;
   final ThemeController theme;
+  final AppInfo appInfo;
 
   @override
   State<AuthGate> createState() => _AuthGateState();
@@ -106,7 +120,9 @@ class _AuthGateState extends State<AuthGate> {
           );
         }
         final session = sessions.session;
-        if (session == null) return LoginScreen(sessions: sessions);
+        if (session == null) {
+          return LoginScreen(sessions: sessions, appInfo: widget.appInfo);
+        }
         return HomeShell(
           session: session,
           theme: widget.theme,

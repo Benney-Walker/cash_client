@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:cash_client/auth/auth_api.dart';
 import 'package:cash_client/auth/auth_session.dart';
 import 'package:cash_client/auth/session_store.dart';
+import 'package:cash_client/settings/app_info.dart';
 import 'package:cash_client/settings/theme_mode_store.dart';
 import 'package:flutter/material.dart' show ThemeMode;
 import 'package:http/http.dart' as http;
@@ -29,6 +30,12 @@ class MemorySessionStore implements SessionStore {
 }
 
 const testBaseUrl = 'https://api.example.test';
+
+const testAppInfo = AppInfo(
+  version: '1.0.0',
+  buildNumber: '1',
+  apiBaseUrl: testBaseUrl,
+);
 
 /// A login response body in the backend's shape.
 String loginBody({List<String> roles = const ['COLLECTOR']}) => jsonEncode({

@@ -90,4 +90,56 @@ abstract final class AppColors {
   static const onHero = Color(0xFFFFFFFF);
   static const lightOnHeroSecondary = Color(0xFFEEF2FF);
   static const darkOnHeroSecondary = Color(0xFFC7D2FE);
+
+  // Lighter gradient tints, added 12 November 2026 in the desktop app and
+  // shared by both apps (owner decision). Keep these identical to the
+  // desktop app's lib/theme/app_colors.dart; change both or neither. Text
+  // pairings are checked in test/theme/app_gradients_test.dart.
+
+  // Light mode. The panel is a pale indigo-to-sky wash with soft glows.
+  static const lightPanelStops = [Color(0xFFEEF2FF), Color(0xFFE0F2FE)];
+  static const lightPanelGlows = [
+    Color(0xFFC7D2FE), // indigo
+    Color(0xFFA5F3FC), // cyan
+    Color(0xFFDDD6FE), // lavender
+  ];
+  static const lightPanelText = Color(0xFF312E81);
+  static const lightPanelTextSecondary = Color(0xFF4338CA);
+  static const lightIllustrationStops = [Color(0xFF818CF8), Color(0xFF22D3EE)];
+  // Two stops only: a brighter indigo in the middle would drop white text
+  // below 4.5:1.
+  static const lightButtonStops = [Color(0xFF4F46E5), Color(0xFF0E7490)];
+  static const lightOnButton = Color(0xFFFFFFFF);
+  static const lightPageGlows = [
+    Color(0x59A5F3FC), // cyan at 35%
+    Color(0x73C7D2FE), // indigo at 45%
+  ];
+  static const lightGlassFill = Color(0x8CFFFFFF);
+  static const lightGlassBorder = Color(0xE6FFFFFF);
+
+  // Dark mode. Deep navy to teal, with translucent glows.
+  static const darkPanelStops = [
+    Color(0xFF1E1B4B),
+    Color(0xFF172554),
+    Color(0xFF164E63),
+  ];
+  static const darkPanelGlows = [
+    Color(0x8C6366F1), // indigo at 55%
+    Color(0x990E7490), // teal at 60%
+  ];
+  static const darkPanelText = Color(0xFFFFFFFF);
+  static const darkPanelTextSecondary = Color(0xFFE0E7FF);
+  static const darkIllustrationStops = [Color(0xFFA5B4FC), Color(0xFF67E8F9)];
+  static const darkButtonStops = [
+    Color(0xFFA5B4FC),
+    Color(0xFFC4B5FD),
+    Color(0xFF67E8F9),
+  ];
+  static const darkOnButton = Color(0xFF1E1B4B);
+  static const darkPageGlows = [
+    Color(0x59155E75), // teal at 35%
+    Color(0x593730A3), // indigo at 35%
+  ];
+  static const darkGlassFill = Color(0x1AFFFFFF);
+  static const darkGlassBorder = Color(0x47FFFFFF);
 }

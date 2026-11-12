@@ -24,7 +24,9 @@ void main() {
     );
     theme = ThemeController(MemoryThemeModeStore(savedTheme));
     await theme.load();
-    await tester.pumpWidget(CashClientApp(sessions: sessions, theme: theme));
+    await tester.pumpWidget(
+      CashClientApp(sessions: sessions, theme: theme, appInfo: testAppInfo),
+    );
     await sessions.restore();
     await tester.pumpAndSettle();
   }

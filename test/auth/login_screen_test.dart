@@ -1,6 +1,7 @@
 import 'package:cash_client/auth/auth_api.dart';
 import 'package:cash_client/auth/login_screen.dart';
 import 'package:cash_client/auth/session_manager.dart';
+import 'package:cash_client/common/gradient_button.dart';
 import 'package:cash_client/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -19,7 +20,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         theme: AppTheme.light,
-        home: LoginScreen(sessions: sessions),
+        home: LoginScreen(sessions: sessions, appInfo: testAppInfo),
       ),
     );
   }
@@ -109,5 +110,50 @@ void main() {
     await pumpLogin(tester, fakeAuthApi(200, loginBody()));
 
     expect(find.byKey(const Key('login.notice')), findsNothing);
+  });
+
+  testWidgets('shows the app version and the glass labels', (tester) async {
+    await pumpLogin(tester, fakeAuthApi(200, loginBody()));
+
+    expect(find.text('Version 1.0.0 (build 1) · Powered by Bynex Labs'),
+        findsOneWidget);
+    expect(find.text('Collectors only'), findsOneWidget);
+    expect(find.text('Protected'), findsOneWidget);
+  });
+
+  testWidgets('the sign-in button is the gradient primary button',
+      (tester) async {
+    await pumpLogin(tester, fakeAuthApi(200, loginBody()));
+
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('login.submit')),
+        matching: find.byType(FilledButton),
+      ),
+      findsOneWidget,
+    );
+    expect(tester.widget(find.byKey(const Key('login.submit'))),
+        isA<GradientButton>());
+  });
+
+  testWidgets('fits a 360dp phone without overflow, in both themes',
+      (tester) async {
+    tester.view.physicalSize = const Size(1080, 2340);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+
+    for (final theme in [AppTheme.light, AppTheme.dark]) {
+      store = MemorySessionStore();
+      sessions = SessionManager(api: fakeAuthApi(200, loginBody()), store: store);
+      await sessions.restore();
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: theme,
+          home: LoginScreen(sessions: sessions, appInfo: testAppInfo),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    }
   });
 }
