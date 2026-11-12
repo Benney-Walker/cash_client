@@ -1,10 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
+import '../common/glass_card.dart';
+import '../common/gradient_button.dart';
+import '../common/gradient_wash.dart';
 import '../common/names.dart';
-import '../theme/app_status_colors.dart';
+import '../theme/app_gradients.dart';
 
-/// The collector's home: today's total, the main actions, and the most
-/// recent records.
+/// The collector's home, design H1 ("wash header"): the pale gradient wash
+/// across the top with the greeting and today's total on a glass card,
+/// then the actions and recent records on the plain page.
 ///
 /// The backend endpoints for recording and listing collections don't exist
 /// yet, so the totals show an empty day and the actions explain that
@@ -27,93 +32,97 @@ class HomeScreen extends StatelessWidget {
   /// For the greeting; replaceable in tests.
   final DateTime Function() now;
 
+  // Two buttons share a row, so they use less side padding than the theme
+  // default to keep "Record deposit" on one line on a 360dp phone.
+  static const _compactPadding = EdgeInsets.symmetric(horizontal: 12);
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final textTheme = theme.textTheme;
-    final scheme = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
 
-    return Scaffold(
-      body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+    // The wash runs under the status bar, so its icons follow the wash.
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: isDark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark,
+      child: Scaffold(
+        body: ListView(
+          padding: EdgeInsets.zero,
           children: [
-            Text(
-              greetingFor(now()),
-              style: textTheme.bodyMedium
-                  ?.copyWith(color: scheme.onSurfaceVariant),
-            ),
-            Text(
-              displayName(staffName),
-              key: const Key('home.staffName'),
-              style: textTheme.titleLarge,
-            ),
-            const SizedBox(height: 16),
-            const _TodayCard(),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: FilledButton.icon(
-                    key: const Key('home.recordDeposit'),
-                    style: _compactButton,
+            _WashHeader(greeting: greetingFor(now()), name: staffName),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: GradientButton(
+                          key: const Key('home.recordDeposit'),
+                          padding: _compactPadding,
+                          onPressed: () => _notAvailable(
+                            context,
+                            "Recording deposits isn't available yet.",
+                          ),
+                          child: const _IconLabel(
+                            icon: Icons.add,
+                            label: 'Record deposit',
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: OutlinedButton(
+                          key: const Key('home.withdrawal'),
+                          style: const ButtonStyle(
+                            padding: WidgetStatePropertyAll(_compactPadding),
+                          ),
+                          onPressed: () => _notAvailable(
+                            context,
+                            "Withdrawal requests aren't available yet.",
+                          ),
+                          child: const _IconLabel(
+                            icon: Icons.north_east,
+                            label: 'Withdrawal',
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  OutlinedButton.icon(
+                    key: const Key('home.submitDay'),
                     onPressed: () => _notAvailable(
                       context,
-                      "Recording deposits isn't available yet.",
+                      "Submitting the day's collections isn't available yet.",
                     ),
-                    icon: const Icon(Icons.add),
-                    label: const _ButtonLabel('Record deposit'),
+                    icon: const Icon(Icons.send_outlined),
+                    label: const Text("Submit today's collections"),
                   ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    key: const Key('home.withdrawal'),
-                    style: _compactButton,
-                    onPressed: () => _notAvailable(
-                      context,
-                      "Withdrawal requests aren't available yet.",
-                    ),
-                    icon: const Icon(Icons.north_east),
-                    label: const _ButtonLabel('Withdrawal'),
+                  const SizedBox(height: 20),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text('Recent', style: textTheme.titleMedium),
+                      ),
+                      TextButton(
+                        key: const Key('home.seeAll'),
+                        onPressed: onSeeAll,
+                        child: const Text('See all'),
+                      ),
+                    ],
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            OutlinedButton.icon(
-              key: const Key('home.submitDay'),
-              onPressed: () => _notAvailable(
-                context,
-                "Submitting the day's collections isn't available yet.",
+                  const SizedBox(height: 4),
+                  const _EmptyRecent(),
+                ],
               ),
-              icon: const Icon(Icons.send_outlined),
-              label: const Text("Submit today's collections"),
             ),
-            const SizedBox(height: 20),
-            Row(
-              children: [
-                Expanded(child: Text('Recent', style: textTheme.titleMedium)),
-                TextButton(
-                  key: const Key('home.seeAll'),
-                  onPressed: onSeeAll,
-                  child: const Text('See all'),
-                ),
-              ],
-            ),
-            const SizedBox(height: 4),
-            const _EmptyRecent(),
           ],
         ),
       ),
     );
   }
-
-  // Two buttons share a row, so they use less side padding than the theme
-  // default to keep "Record deposit" on one line on a 360dp phone.
-  static const _compactButton = ButtonStyle(
-    padding: WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 12)),
-  );
 
   static void _notAvailable(BuildContext context, String message) {
     ScaffoldMessenger.of(context)
@@ -133,55 +142,105 @@ String greetingFor(DateTime time) {
   return 'Good evening';
 }
 
-class _ButtonLabel extends StatelessWidget {
-  const _ButtonLabel(this.text);
+/// The wash across the top: greeting, name and today's total.
+class _WashHeader extends StatelessWidget {
+  const _WashHeader({required this.greeting, required this.name});
 
-  final String text;
+  final String greeting;
+  final String name;
 
   @override
-  Widget build(BuildContext context) =>
-      Text(text, maxLines: 1, overflow: TextOverflow.ellipsis);
+  Widget build(BuildContext context) {
+    final gradients = AppGradients.of(context);
+    final textTheme = Theme.of(context).textTheme;
+    final topInset = MediaQuery.paddingOf(context).top;
+
+    return GradientWash(
+      borderRadius: const BorderRadius.vertical(bottom: Radius.circular(24)),
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(16, topInset + 12, 16, 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // On the open wash the lighter secondary tone is readable
+            // (at least 5:1); on the glass card below it isn't, so the card
+            // uses panelText throughout.
+            Text(
+              greeting,
+              style: textTheme.bodyMedium
+                  ?.copyWith(color: gradients.panelTextSecondary),
+            ),
+            Text(
+              displayName(name),
+              key: const Key('home.staffName'),
+              style: textTheme.titleLarge?.copyWith(
+                color: gradients.panelText,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 12),
+            const _TodayCard(),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
-/// Today's total, on the hero gradient. Until the backend can report the
-/// day's records, it shows an empty day.
+/// Today's total on a glass card. Until the backend can report the day's
+/// records, it shows an empty day.
 class _TodayCard extends StatelessWidget {
   const _TodayCard();
 
   @override
   Widget build(BuildContext context) {
-    final status = AppStatusColors.of(context);
+    final gradients = AppGradients.of(context);
     final textTheme = Theme.of(context).textTheme;
-    final secondary = textTheme.bodySmall?.copyWith(
-      color: status.onHeroSecondary,
-    );
+    final label = textTheme.bodySmall?.copyWith(color: gradients.panelText);
 
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        gradient: status.heroGradient,
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text("Today's collections", style: secondary),
-            const SizedBox(height: 4),
-            Text(
-              'GH₵ 0.00',
-              key: const Key('home.todayTotal'),
-              style: textTheme.headlineMedium?.copyWith(
-                color: status.onHero,
-                fontWeight: FontWeight.w600,
-                fontFeatures: const [FontFeature.tabularFigures()],
-              ),
+    return GlassCard(
+      padding: const EdgeInsets.all(14),
+      radius: 16,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text("Today's collections", style: label),
+          const SizedBox(height: 2),
+          Text(
+            'GH₵ 0.00',
+            key: const Key('home.todayTotal'),
+            style: textTheme.headlineMedium?.copyWith(
+              color: gradients.panelText,
+              fontWeight: FontWeight.w600,
+              fontFeatures: const [FontFeature.tabularFigures()],
             ),
-            const SizedBox(height: 4),
-            Text('No records yet today', style: secondary),
-          ],
-        ),
+          ),
+          const SizedBox(height: 2),
+          Text('No records yet today', style: label),
+        ],
       ),
+    );
+  }
+}
+
+/// An icon and a label that shortens with "…" instead of overflowing.
+class _IconLabel extends StatelessWidget {
+  const _IconLabel({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 18),
+        const SizedBox(width: 8),
+        Flexible(
+          child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+        ),
+      ],
     );
   }
 }

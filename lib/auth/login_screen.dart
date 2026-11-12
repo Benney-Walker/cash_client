@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../common/glass_card.dart';
 import '../common/glass_label.dart';
 import '../common/gradient_button.dart';
 import '../common/gradient_wash.dart';
@@ -124,7 +125,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           constraints: const BoxConstraints(maxWidth: 440),
                           child: Padding(
                             padding: const EdgeInsets.symmetric(horizontal: 16),
-                            child: _GlassCard(child: _buildForm(context)),
+                            child: GlassCard(child: _buildForm(context)),
                           ),
                         ),
                       ),
@@ -272,27 +273,6 @@ class _LoginScreenState extends State<LoginScreen> {
           ],
         ),
       ),
-    );
-  }
-}
-
-/// The frosted card that holds the form.
-class _GlassCard extends StatelessWidget {
-  const _GlassCard({required this.child});
-
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    final gradients = AppGradients.of(context);
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: gradients.glassFill,
-        border: Border.all(color: gradients.glassBorder),
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: child,
     );
   }
 }

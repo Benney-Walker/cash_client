@@ -1,3 +1,6 @@
+import 'package:cash_client/common/glass_card.dart';
+import 'package:cash_client/common/gradient_button.dart';
+import 'package:cash_client/common/gradient_wash.dart';
 import 'package:cash_client/common/names.dart';
 import 'package:cash_client/home/home_screen.dart';
 import 'package:cash_client/theme/app_theme.dart';
@@ -106,5 +109,33 @@ void main() {
           greaterThanOrEqualTo(AppTheme.minTouchTarget),
           reason: key);
     }
+  });
+
+  testWidgets("the greeting and today's total sit on the wash header, "
+      'with the total on a glass card', (tester) async {
+    await pumpHome(tester);
+
+    expect(
+      find.descendant(
+        of: find.byType(GradientWash),
+        matching: find.byKey(const Key('home.staffName')),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byType(GlassCard),
+        matching: find.byKey(const Key('home.todayTotal')),
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('Record deposit is the one gradient button', (tester) async {
+    await pumpHome(tester);
+
+    expect(find.byType(GradientButton), findsOneWidget);
+    expect(tester.widget(find.byKey(const Key('home.recordDeposit'))),
+        isA<GradientButton>());
   });
 }

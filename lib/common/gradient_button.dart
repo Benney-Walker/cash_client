@@ -15,12 +15,17 @@ class GradientButton extends StatelessWidget {
     super.key,
     required this.onPressed,
     required this.child,
+    this.padding,
   });
 
   /// Null while busy or unavailable. The button is then dimmed and ignores
   /// presses.
   final VoidCallback? onPressed;
   final Widget child;
+
+  /// Overrides the theme's side padding, for a button that shares a row
+  /// with another. (The one addition to the desktop app's copy.)
+  final EdgeInsetsGeometry? padding;
 
   @override
   Widget build(BuildContext context) {
@@ -42,6 +47,7 @@ class GradientButton extends StatelessWidget {
             foregroundColor: gradients.onButton,
             disabledForegroundColor: gradients.onButton,
             shadowColor: Colors.transparent,
+            padding: padding,
           ),
           child: child,
         ),
