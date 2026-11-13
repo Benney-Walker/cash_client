@@ -30,11 +30,13 @@ class AuthApi {
     required String staffId,
     required String password,
   }) async {
-    final json = await _post(
+    final response = await _post(
       '/api/auth/v1/login',
       {'staffId': staffId, 'password': password},
     );
-    final session = AuthSession.fromLoginResponse(staffId, json);
+    final json = _jsonObject(response.body);
+    final session =
+        json == null ? null : AuthSession.fromLoginResponse(staffId, json);
     if (session == null) {
       throw const ApiException(ApiFailure.unexpectedResponse, statusCode: 200);
     }
@@ -43,23 +45,61 @@ class AuthApi {
 
   /// `POST /api/auth/v1/refresh-token`. Returns a new access token.
   ///
+  /// The backend answers with the bare token as the response body, not a
+  /// JSON object (contract as of 12 Nov 2026). Because the app asks for
+  /// JSON, Spring may also send it as a JSON string in quotes, so both are
+  /// accepted.
+  ///
   /// The backend answers 401 ([ApiFailure.unauthorized]) when the refresh
   /// token has expired or is invalid, or the staff member is no longer
   /// active. It doesn't issue a new refresh token, so once that one expires
   /// the collector has to sign in again.
   Future<String> refreshAccessToken(String refreshToken) async {
-    final json = await _post(
+    final response = await _post(
       '/api/auth/v1/refresh-token',
       {'refreshToken': refreshToken},
     );
-    final accessToken = json['authToken'];
-    if (accessToken is! String || accessToken.isEmpty) {
+    final accessToken = _bareToken(response.body);
+    if (accessToken == null) {
       throw const ApiException(ApiFailure.unexpectedResponse, statusCode: 200);
     }
     return accessToken;
   }
 
-  Future<Map<String, dynamic>> _post(
+  // The backend's tokens are signed JWTs: three base64url parts joined by
+  // dots. Checking the shape catches a proxy error page or other stray body
+  // before it's saved and sent as a bearer token.
+  static final _jwtShape =
+      RegExp(r'^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*$');
+
+  /// The token in a bare-token body (`abc.def.ghi` or `"abc.def.ghi"`), or
+  /// null if the body isn't one.
+  static String? _bareToken(String body) {
+    var text = body.trim();
+    if (text.startsWith('"')) {
+      try {
+        final decoded = jsonDecode(text);
+        if (decoded is! String) return null;
+        text = decoded.trim();
+      } on FormatException {
+        return null;
+      }
+    }
+    return _jwtShape.hasMatch(text) ? text : null;
+  }
+
+  static Map<String, dynamic>? _jsonObject(String body) {
+    try {
+      final json = jsonDecode(body);
+      return json is Map<String, dynamic> ? json : null;
+    } on FormatException {
+      return null;
+    }
+  }
+
+  /// Sends a JSON body and returns a 200 response. Any other status becomes
+  /// an [ApiException] built from the backend's standard error body.
+  Future<http.Response> _post(
     String path,
     Map<String, Object?> body,
   ) async {
@@ -86,13 +126,7 @@ class AuthApi {
     if (response.statusCode != 200) {
       throw ApiException.fromResponse(response.statusCode, response.body);
     }
-    try {
-      final json = jsonDecode(response.body);
-      if (json is Map<String, dynamic>) return json;
-    } on FormatException {
-      // Falls through to the unexpected-response error below.
-    }
-    throw const ApiException(ApiFailure.unexpectedResponse, statusCode: 200);
+    return response;
   }
 
   Uri _endpoint(String path) {

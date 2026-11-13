@@ -19,7 +19,7 @@ void main() {
     ThemeMode? savedTheme,
   }) async {
     sessions = SessionManager(
-      api: (backend ?? FakeRefreshApi(FakeRefreshApi.issues('new'))).api,
+      api: (backend ?? FakeRefreshApi(FakeRefreshApi.issues('new.access.token'))).api,
       store: store ?? MemorySessionStore(),
     );
     theme = ThemeController(MemoryThemeModeStore(savedTheme));

@@ -56,6 +56,8 @@ On the glass card all text uses the panel's main text colour, and in dark mode f
 - On launch, a stored session skips sign-in, so a collector stays signed in until they sign out or the backend ends the session.
 - Signing out only forgets the tokens on the phone; the backend has no logout endpoint yet. The tokens stay valid until they expire. Their lifetimes are set by the backend's `JWT_ACCESS_EXPIRATION` and `JWT_REFRESH_EXPIRATION`.
 
+- Password reset: the backend has a three-step reset (`/api/auth/v1/password-reset/request-code`, `confirm-code`, `new-password`), but it isn't in the collector app for now (owner decision, 13 Nov 2026).
+
 Code: `lib/auth/` (`auth_api.dart`, `session_manager.dart`, `session_store.dart`, `login_screen.dart`, and the sign-in messages in `sign_in.dart`), the error mapping in `lib/api/api_exception.dart`, and the sign-in/home switch in `lib/main.dart`.
 
 ## Token refresh
@@ -63,7 +65,8 @@ Code: `lib/auth/` (`auth_api.dart`, `session_manager.dart`, `session_store.dart`
 Calls to protected endpoints go through `AuthenticatedClient` (`lib/api/authenticated_client.dart`). Future features use it instead of a plain `http.Client`.
 
 - It adds `Authorization: Bearer <access token>` to every request.
-- On a 401 it calls `POST /api/auth/v1/refresh-token`, saves the new access token and replays the request once, body included. Requests that hit a 401 at the same moment share one refresh call.
+- On a 401 it calls `POST /api/auth/v1/refresh-token` with `{"refreshToken": …}`, saves the new access token and replays the request once, body included. Requests that hit a 401 at the same moment share one refresh call.
+- The refresh endpoint answers with the new access token as the bare response body, not a JSON object (backend contract checked 13 Nov 2026 on `bankingbackend` master). A token in quotes is also accepted. The body must have the shape of the backend's signed JWTs (three dot-separated parts); anything else, such as a proxy error page, is treated as an unexpected response rather than saved as a token.
 - The backend doesn't issue a new refresh token, so when the refresh token expires (or the collector is deactivated) the refresh gets a 401. The session then ends: the tokens are cleared and the app returns to sign-in with "Your session has ended." The same path will handle the backend ending the session after the day's submission is approved.
 - If the refresh can't reach the server, the session is kept, so a collector isn't signed out for being offline.
 - A 403 is passed straight through. It means the role isn't allowed, and a new token wouldn't change that.

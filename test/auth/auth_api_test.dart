@@ -135,22 +135,30 @@ void main() {
   });
 
   group('AuthApi.refreshAccessToken', () {
-    test('posts the refresh token and returns the new access token',
-        () async {
+    // A token in the backend's shape: three base64url parts.
+    const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJTVEYwMDEifQ.c2lnbmF0dXJl';
+
+    test('posts the refresh token and returns the bare token body', () async {
       final requests = <http.Request>[];
-      final api = fakeAuthApi(
-        200,
-        jsonEncode({'authToken': 'new-access'}),
-        requests: requests,
-      );
+      final api = fakeAuthApi(200, jwt, requests: requests);
 
       final token = await api.refreshAccessToken('refresh-token');
 
-      expect(token, 'new-access');
+      expect(token, jwt);
       expect(requests.single.url.toString(),
           '$testBaseUrl/api/auth/v1/refresh-token');
       expect(jsonDecode(requests.single.body),
           {'refreshToken': 'refresh-token'});
+    });
+
+    test('also accepts the token as a quoted JSON string', () async {
+      final api = fakeAuthApi(200, jsonEncode(jwt));
+      expect(await api.refreshAccessToken('r'), jwt);
+    });
+
+    test('ignores surrounding whitespace', () async {
+      final api = fakeAuthApi(200, '  $jwt\n');
+      expect(await api.refreshAccessToken('r'), jwt);
     });
 
     test('401 (expired refresh token or inactive staff) is unauthorized', () {
@@ -159,10 +167,19 @@ void main() {
           failsWith(ApiFailure.unauthorized));
     });
 
-    test('a 200 without a token is an unexpected response', () {
-      final api = fakeAuthApi(200, jsonEncode({}));
-      expect(api.refreshAccessToken('x'),
-          failsWith(ApiFailure.unexpectedResponse));
+    test('a body that is not a token is an unexpected response', () {
+      for (final body in [
+        '',
+        '<html>proxy page</html>',
+        jsonEncode({'authToken': jwt}),
+        'not a token',
+        jsonEncode(42),
+      ]) {
+        final api = fakeAuthApi(200, body);
+        expect(api.refreshAccessToken('x'),
+            failsWith(ApiFailure.unexpectedResponse),
+            reason: body);
+      }
     });
   });
 }

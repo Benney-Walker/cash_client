@@ -45,7 +45,7 @@ void main() {
       );
 
   setUp(() async {
-    refreshBackend = FakeRefreshApi(FakeRefreshApi.issues('new-access'));
+    refreshBackend = FakeRefreshApi(FakeRefreshApi.issues('new.access.token'));
     await signIn();
   });
 
@@ -63,7 +63,7 @@ void main() {
 
   test('on 401, refreshes once and replays the request with its body',
       () async {
-    final backend = FakeProtectedApi({'new-access'});
+    final backend = FakeProtectedApi({'new.access.token'});
     final client = AuthenticatedClient(backend.client, sessions);
 
     final response = await postDeposit(client);
@@ -72,19 +72,19 @@ void main() {
     expect(refreshBackend.calls, 1);
     expect(backend.requests, hasLength(2));
     final retry = backend.requests.last;
-    expect(retry.headers['Authorization'], 'Bearer new-access');
+    expect(retry.headers['Authorization'], 'Bearer new.access.token');
     expect(retry.method, 'POST');
     expect(jsonDecode(retry.body), {'amount': '50.00'});
-    expect(store.session?.accessToken, 'new-access');
+    expect(store.session?.accessToken, 'new.access.token');
   });
 
   test('requests that hit 401 together share one refresh', () async {
     refreshBackend = FakeRefreshApi(
-      FakeRefreshApi.issues('new-access'),
+      FakeRefreshApi.issues('new.access.token'),
       delay: const Duration(milliseconds: 20),
     );
     await signIn();
-    final backend = FakeProtectedApi({'new-access'});
+    final backend = FakeProtectedApi({'new.access.token'});
     final client = AuthenticatedClient(backend.client, sessions);
 
     final responses = await Future.wait([
@@ -100,7 +100,7 @@ void main() {
   test('a refused refresh ends the session and reports unauthorized',
       () async {
     refreshBackend.refresh = FakeRefreshApi.refuses();
-    final backend = FakeProtectedApi({'new-access'});
+    final backend = FakeProtectedApi({'new.access.token'});
     final client = AuthenticatedClient(backend.client, sessions);
 
     await expectLater(
@@ -115,7 +115,7 @@ void main() {
 
   test('no connection during the refresh keeps the session', () async {
     refreshBackend.offline = true;
-    final backend = FakeProtectedApi({'new-access'});
+    final backend = FakeProtectedApi({'new.access.token'});
     final client = AuthenticatedClient(backend.client, sessions);
 
     await expectLater(

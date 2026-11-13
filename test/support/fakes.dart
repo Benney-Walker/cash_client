@@ -110,8 +110,8 @@ class FakeRefreshApi {
     }),
   );
 
-  static (int, String) issues(String token) =>
-      (200, jsonEncode({'authToken': token}));
+  /// The backend sends the new access token as the bare response body.
+  static (int, String) issues(String token) => (200, token);
 
   static (int, String) refuses() =>
       (401, errorBody(401, 'Invalid refresh token'));

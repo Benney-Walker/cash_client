@@ -117,21 +117,21 @@ void main() {
     }
 
     test('saves and returns the new access token', () async {
-      final backend = FakeRefreshApi(FakeRefreshApi.issues('new-access'));
+      final backend = FakeRefreshApi(FakeRefreshApi.issues('new.access.token'));
       final (sessions, store) = await signedIn(backend);
 
       final token = await sessions.refreshAccessToken();
 
-      expect(token, 'new-access');
-      expect(sessions.session?.accessToken, 'new-access');
-      expect(store.session?.accessToken, 'new-access');
+      expect(token, 'new.access.token');
+      expect(sessions.session?.accessToken, 'new.access.token');
+      expect(store.session?.accessToken, 'new.access.token');
       // The refresh token is kept: the backend doesn't issue a new one.
       expect(store.session?.refreshToken, 'refresh-token');
     });
 
     test('overlapping callers share one refresh call', () async {
       final backend = FakeRefreshApi(
-        FakeRefreshApi.issues('new-access'),
+        FakeRefreshApi.issues('new.access.token'),
         delay: const Duration(milliseconds: 20),
       );
       final (sessions, _) = await signedIn(backend);
@@ -142,7 +142,7 @@ void main() {
         sessions.refreshAccessToken(),
       ]);
 
-      expect(tokens, everyElement('new-access'));
+      expect(tokens, everyElement('new.access.token'));
       expect(backend.calls, 1);
     });
 
@@ -161,7 +161,7 @@ void main() {
     });
 
     test('being offline keeps the session', () async {
-      final backend = FakeRefreshApi(FakeRefreshApi.issues('unused'))
+      final backend = FakeRefreshApi(FakeRefreshApi.issues('unused.access.token'))
         ..offline = true;
       final (sessions, store) = await signedIn(backend);
 
