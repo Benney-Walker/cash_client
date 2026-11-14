@@ -54,10 +54,10 @@ class SessionManager extends ChangeNotifier {
 
   /// Signs a collector in and keeps the session.
   ///
-  /// Throws [NotCollectorException] for any other role, without saving
-  /// their tokens, and [ApiException] when the login call fails. The
-  /// backend still enforces permissions on every endpoint; this check only
-  /// keeps the wrong people out of an app that isn't built for them.
+  /// Throws [ApiException] when the login call fails; the collector sign-in
+  /// endpoint already refuses other roles with a 403. The role is checked
+  /// here too, as a second line: anything without the COLLECTOR role throws
+  /// [NotCollectorException] and its tokens are never saved.
   Future<void> signIn({
     required String staffId,
     required String password,

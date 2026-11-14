@@ -50,8 +50,8 @@ The screen is design option 2, "glass card": the pale gradient wash fills the sc
 
 On the glass card all text uses the panel's main text colour, and in dark mode field error messages do too. The lighter secondary tone and the error reds fall below 4.5:1 on dark-mode glass where it crosses the teal glow; the field's red border still marks an error. Field labels stay inside the fields rather than floating up onto the glass.
 
-- Calls `POST /api/auth/v1/login` with `staffId` and `password`. The backend returns `staffName`, `roles`, `authToken` and `refreshToken`; a wrong ID or password, or an inactive account, returns 401.
-- The backend signs in any staff role, so the app checks for `COLLECTOR`. Anyone else sees a message pointing them to the desktop app, and their tokens are discarded, not stored. The backend still enforces permissions on every endpoint.
+- Calls `POST /api/auth/v1/collector-login` with `staffId` and `password` (collectors have their own sign-in endpoint since 14 Nov 2026; the desktop app uses `staff-login`, which refuses collectors). The backend returns `staffName`, `roles`, `authToken` and `refreshToken`. A wrong ID or password, or an inactive account, returns 401; a valid account that isn't a collector returns 403.
+- A 403, or a response without the `COLLECTOR` role, shows a message pointing the person to the desktop app, and any tokens are discarded, not stored. The backend still enforces permissions on every endpoint.
 - The session (tokens, staff ID, name, roles) is stored with `flutter_secure_storage`, backed by the Android Keystore. The password is never stored. App backup is turned off so tokens never leave the phone.
 - On launch, a stored session skips sign-in, so a collector stays signed in until they sign out or the backend ends the session.
 - Signing out only forgets the tokens on the phone; the backend has no logout endpoint yet. The tokens stay valid until they expire. Their lifetimes are set by the backend's `JWT_ACCESS_EXPIRATION` and `JWT_REFRESH_EXPIRATION`.
@@ -65,8 +65,8 @@ Code: `lib/auth/` (`auth_api.dart`, `session_manager.dart`, `session_store.dart`
 Calls to protected endpoints go through `AuthenticatedClient` (`lib/api/authenticated_client.dart`). Future features use it instead of a plain `http.Client`.
 
 - It adds `Authorization: Bearer <access token>` to every request.
-- On a 401 it calls `POST /api/auth/v1/refresh-token` with `{"refreshToken": …}`, saves the new access token and replays the request once, body included. Requests that hit a 401 at the same moment share one refresh call.
-- The refresh endpoint answers with the new access token as the bare response body, not a JSON object (backend contract checked 13 Nov 2026 on `bankingbackend` master). A token in quotes is also accepted. The body must have the shape of the backend's signed JWTs (three dot-separated parts); anything else, such as a proxy error page, is treated as an unexpected response rather than saved as a token.
+- On a 401 it calls `POST /api/auth/v1/refresh-collector-token` with `{"refreshToken": …}`, saves the new access token and replays the request once, body included. That endpoint accepts only collector refresh tokens. Requests that hit a 401 at the same moment share one refresh call.
+- The refresh endpoint answers with the new access token as the bare response body, not a JSON object (backend contract checked 14 Nov 2026 on `bankingbackend` master). A token in quotes is also accepted. The body must have the shape of the backend's signed JWTs (three dot-separated parts); anything else, such as a proxy error page, is treated as an unexpected response rather than saved as a token.
 - The backend doesn't issue a new refresh token, so when the refresh token expires (or the collector is deactivated) the refresh gets a 401. The session then ends: the tokens are cleared and the app returns to sign-in with "Your session has ended." The same path will handle the backend ending the session after the day's submission is approved.
 - If the refresh can't reach the server, the session is kept, so a collector isn't signed out for being offline.
 - A 403 is passed straight through. It means the role isn't allowed, and a new token wouldn't change that.

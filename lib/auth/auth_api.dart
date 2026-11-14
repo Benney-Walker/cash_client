@@ -21,17 +21,18 @@ class AuthApi {
   final http.Client _client;
   final Duration timeout;
 
-  /// `POST /api/auth/v1/login`.
+  /// `POST /api/auth/v1/collector-login`.
   ///
-  /// Throws [ApiException]. Any staff member can sign in here; checking that
-  /// they're a collector is the caller's job, because the backend accepts
-  /// every role.
+  /// Collectors have their own sign-in endpoint (backend, 14 Nov 2026). It
+  /// answers 401 ([ApiFailure.unauthorized]) for a wrong staff ID or
+  /// password or an inactive account, and 403 ([ApiFailure.forbidden]) for
+  /// a valid account that isn't a collector. Throws [ApiException].
   Future<AuthSession> login({
     required String staffId,
     required String password,
   }) async {
     final response = await _post(
-      '/api/auth/v1/login',
+      '/api/auth/v1/collector-login',
       {'staffId': staffId, 'password': password},
     );
     final json = _jsonObject(response.body);
@@ -43,20 +44,21 @@ class AuthApi {
     return session;
   }
 
-  /// `POST /api/auth/v1/refresh-token`. Returns a new access token.
+  /// `POST /api/auth/v1/refresh-collector-token`. Returns a new access
+  /// token. Only collector refresh tokens are accepted here.
   ///
   /// The backend answers with the bare token as the response body, not a
-  /// JSON object (contract as of 12 Nov 2026). Because the app asks for
+  /// JSON object (contract checked 14 Nov 2026). Because the app asks for
   /// JSON, Spring may also send it as a JSON string in quotes, so both are
   /// accepted.
   ///
   /// The backend answers 401 ([ApiFailure.unauthorized]) when the refresh
-  /// token has expired or is invalid, or the staff member is no longer
-  /// active. It doesn't issue a new refresh token, so once that one expires
-  /// the collector has to sign in again.
+  /// token has expired or is invalid, the account is no longer active, or
+  /// it isn't a collector's. It doesn't issue a new refresh token, so once
+  /// that one expires the collector has to sign in again.
   Future<String> refreshAccessToken(String refreshToken) async {
     final response = await _post(
-      '/api/auth/v1/refresh-token',
+      '/api/auth/v1/refresh-collector-token',
       {'refreshToken': refreshToken},
     );
     final accessToken = _bareToken(response.body);

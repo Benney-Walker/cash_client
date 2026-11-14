@@ -24,7 +24,7 @@ void main() {
 
       final request = requests.single;
       expect(request.method, 'POST');
-      expect(request.url.toString(), '$testBaseUrl/api/auth/v1/login');
+      expect(request.url.toString(), '$testBaseUrl/api/auth/v1/collector-login');
       expect(request.headers['Content-Type'], startsWith('application/json'));
       expect(jsonDecode(request.body), {
         'staffId': 'STF001',
@@ -48,8 +48,8 @@ void main() {
     test('works with a trailing slash or a path prefix on the base URL',
         () async {
       for (final (base, expected) in [
-        ('https://api.example.test/', 'https://api.example.test/api/auth/v1/login'),
-        ('https://example.test/bank', 'https://example.test/bank/api/auth/v1/login'),
+        ('https://api.example.test/', 'https://api.example.test/api/auth/v1/collector-login'),
+        ('https://example.test/bank', 'https://example.test/bank/api/auth/v1/collector-login'),
       ]) {
         Uri? called;
         final api = AuthApi(
@@ -68,6 +68,15 @@ void main() {
       final api = fakeAuthApi(401, errorBody(401, 'Invalid ID or password'));
       expect(api.login(staffId: 'a', password: 'b'),
           failsWith(ApiFailure.unauthorized));
+    });
+
+    test('403 (a valid account that is not a collector) is forbidden', () {
+      final api = fakeAuthApi(
+        403,
+        errorBody(403, 'Only collector accounts can sign in here'),
+      );
+      expect(api.login(staffId: 'AGT001', password: 'b'),
+          failsWith(ApiFailure.forbidden));
     });
 
     test('400 carries the field errors from the backend', () async {
@@ -146,7 +155,7 @@ void main() {
 
       expect(token, jwt);
       expect(requests.single.url.toString(),
-          '$testBaseUrl/api/auth/v1/refresh-token');
+          '$testBaseUrl/api/auth/v1/refresh-collector-token');
       expect(jsonDecode(requests.single.body),
           {'refreshToken': 'refresh-token'});
     });

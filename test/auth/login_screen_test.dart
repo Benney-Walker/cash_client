@@ -98,6 +98,19 @@ void main() {
     expect(sessions.session, isNull);
   });
 
+  testWidgets('an account the backend refuses as not a collector is turned '
+      'away', (tester) async {
+    await pumpLogin(
+      tester,
+      fakeAuthApi(403, errorBody(403, 'Only collector accounts can sign in here')),
+    );
+
+    await enterAndSubmit(tester);
+
+    expect(find.textContaining('desktop app'), findsOneWidget);
+    expect(store.session, isNull);
+  });
+
   testWidgets('the staff ID is trimmed before it is sent', (tester) async {
     await pumpLogin(tester, fakeAuthApi(200, loginBody()));
 

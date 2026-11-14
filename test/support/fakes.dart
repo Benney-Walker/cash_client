@@ -53,7 +53,7 @@ String errorBody(int status, String message,
       'status': status,
       'error': 'Error',
       'message': message,
-      'path': '/api/auth/v1/login',
+      'path': '/api/auth/v1/collector-login',
       if (errors != null) 'errors': errors,
     });
 
@@ -99,7 +99,7 @@ class FakeRefreshApi {
   late final AuthApi api = AuthApi(
     baseUrl: testBaseUrl,
     client: MockClient((request) async {
-      if (request.url.path.endsWith('/refresh-token')) {
+      if (request.url.path.endsWith('/refresh-collector-token')) {
         calls++;
         if (delay > Duration.zero) await Future<void>.delayed(delay);
         if (offline) throw http.ClientException('no connection');

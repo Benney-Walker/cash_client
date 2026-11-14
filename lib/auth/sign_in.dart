@@ -14,7 +14,10 @@ String signInErrorMessage(Object error) {
   if (error is ApiException) {
     return switch (error.failure) {
       ApiFailure.unauthorized => 'Wrong staff ID or password.',
-      ApiFailure.forbidden => "Your account can't sign in to this app.",
+      // The collector sign-in endpoint answers 403 for valid accounts that
+      // aren't collectors.
+      ApiFailure.forbidden =>
+        'This app is for collectors. Administrators and agents use the desktop app.',
       ApiFailure.network =>
         "Couldn't reach the server. Check your connection and try again.",
       ApiFailure.validation =>
