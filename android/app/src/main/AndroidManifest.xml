@@ -1,5 +1,12 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Release builds talk to the backend, so they need this too; Flutter
+         only adds it to debug builds by default. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- allowBackup is off so the stored sign-in tokens never leave the
+         device in a backup. A restored copy also can't be decrypted on
+         another phone, which flutter_secure_storage reports as an error. -->
     <application
+        android:allowBackup="false"
         android:label="cash_client"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">

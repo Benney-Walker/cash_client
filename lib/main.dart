@@ -1,122 +1,135 @@
 import 'package:flutter/material.dart';
 
-void main() {
-  runApp(const MyApp());
+import 'auth/auth_api.dart';
+import 'auth/login_screen.dart';
+import 'auth/session_manager.dart';
+import 'auth/session_store.dart';
+import 'config/app_config.dart';
+import 'home/home_shell.dart';
+import 'settings/app_info.dart';
+import 'settings/theme_controller.dart';
+import 'settings/theme_mode_store.dart';
+import 'theme/app_theme.dart';
+
+Future<void> main() async {
+  // Secure storage and preferences use platform channels, which need the
+  // binding first.
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // Read the light/dark choice before the first frame so the app doesn't
+  // open in one theme and switch to the other.
+  final theme = ThemeController(PrefsThemeModeStore());
+  await theme.load();
+  final appInfo = await AppInfo.load();
+
+  final sessions = SessionManager(
+    api: AuthApi(baseUrl: AppConfig.apiBaseUrl),
+    store: SecureSessionStore(),
+  )..restore();
+
+  runApp(CashClientApp(sessions: sessions, theme: theme, appInfo: appInfo));
 }
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+class CashClientApp extends StatelessWidget {
+  const CashClientApp({
+    super.key,
+    required this.sessions,
+    required this.theme,
+    required this.appInfo,
+  });
 
-  // This widget is the root of your application.
+  final SessionManager sessions;
+  final ThemeController theme;
+  final AppInfo appInfo;
+
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Flutter Demo',
-      theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
-        colorScheme: .fromSeed(seedColor: Colors.deepPurple),
+    return ListenableBuilder(
+      listenable: theme,
+      builder: (context, _) => MaterialApp(
+        title: 'Cash Client',
+        debugShowCheckedModeBanner: false,
+        theme: AppTheme.light,
+        darkTheme: AppTheme.dark,
+        themeMode: theme.mode,
+        home: AuthGate(sessions: sessions, theme: theme, appInfo: appInfo),
       ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
+/// Shows the login screen or the signed-in app, and switches between them
+/// whenever the session changes, including when the backend ends it.
+class AuthGate extends StatefulWidget {
+  const AuthGate({
+    super.key,
+    required this.sessions,
+    required this.theme,
+    required this.appInfo,
+  });
 
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
+  final SessionManager sessions;
+  final ThemeController theme;
+  final AppInfo appInfo;
 
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  State<AuthGate> createState() => _AuthGateState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+class _AuthGateState extends State<AuthGate> {
+  @override
+  void initState() {
+    super.initState();
+    widget.sessions.addListener(_onSessionChanged);
+  }
 
-  void _incrementCounter() {
-    setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
-    });
+  @override
+  void didUpdateWidget(AuthGate oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.sessions != widget.sessions) {
+      oldWidget.sessions.removeListener(_onSessionChanged);
+      widget.sessions.addListener(_onSessionChanged);
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.sessions.removeListener(_onSessionChanged);
+    super.dispose();
+  }
+
+  void _onSessionChanged() {
+    // This widget is the bottom screen, so swapping it to the login screen
+    // isn't enough when other screens (later, the deposit screens) are open
+    // on top. Close them, so a collector whose session ended can't
+    // keep using a screen that's still showing.
+    if (widget.sessions.session == null && mounted) {
+      Navigator.of(context).popUntil((route) => route.isFirst);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
-    return Scaffold(
-      appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
-      ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
-        child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
-          mainAxisAlignment: .center,
-          children: [
-            const Text('You have pushed the button this many times:'),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
-            ),
-          ],
-        ),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
-      ),
+    return ListenableBuilder(
+      listenable: widget.sessions,
+      builder: (context, _) {
+        final sessions = widget.sessions;
+        if (sessions.isRestoring) {
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+        final session = sessions.session;
+        if (session == null) {
+          return LoginScreen(sessions: sessions, appInfo: widget.appInfo);
+        }
+        return HomeShell(
+          session: session,
+          theme: widget.theme,
+          appInfo: widget.appInfo,
+          onSignOut: sessions.signOut,
+        );
+      },
     );
   }
 }
