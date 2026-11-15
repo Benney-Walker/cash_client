@@ -68,4 +68,11 @@ void main() {
       expect(tester.takeException(), isNull);
     }
   });
+
+  testWidgets('there is no Withdrawals filter', (tester) async {
+    await pumpHistory(tester);
+    expect(find.text('Withdrawals'), findsNothing);
+    expect(HistoryFilter.values.map((f) => f.label),
+        ['All', 'Deposits', 'Shares']);
+  });
 }

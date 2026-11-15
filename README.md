@@ -1,6 +1,6 @@
 # Cash Client
 
-Flutter mobile app for credit union collectors (the Penco system). Collectors use it in the field to record members' daily susu deposits, create withdrawal requests and submit the day's collections to the office.
+Flutter mobile app for credit union collectors (the Penco system). Collectors use it in the field to record members' daily savings deposits and share purchases, and submit the day's collections to the office.
 
 The app is a client of the `bankingbackend` Spring Boot API. It holds no business rules of its own; the backend enforces permissions and records every transaction.
 
@@ -18,7 +18,7 @@ The app is a client of the `bankingbackend` Spring Boot API. It holds no busines
 | Member lookup: branch members' names and savings/shares accounts, saved for offline | Done (backend PR #14) |
 | Savings deposits and share purchases | Done online and offline, with sync in the background and the Outbox (backend PR #14) |
 | Corrections within 10 minutes | Not started (backend ready in PR #14). The saved screen counts the window down |
-| Withdrawal requests | Not started (backend ready in PR #14) |
+| Withdrawal requests | Removed (owner decision, 15 Nov 2026). Members withdraw at a branch office |
 | Location tracking | Not started. Needs backend support |
 | Transaction history | Screen in place, empty. Backend day summary in PR #14 |
 | Daily cash submission and session ending | Not started. Needs backend support |
@@ -82,15 +82,15 @@ Home (`lib/home/home_screen.dart`) keeps design A's layout, restyled as design H
 - The pale gradient wash across the top, running under the status bar, with rounded bottom corners. On it: a greeting for the time of day and the collector's name, shown in normal case (the backend sends it in upper case).
 - Today's collections on a glass card inside the wash: total, number of records and, later, how many are waiting to send. All text on the glass uses the panel's main text colour, as on sign-in.
 - An **Outbox** row on the plain page, only when payments are waiting on the phone or were refused: "3 waiting · 1 refused", opening the Outbox (design R2, 15 Nov 2026).
-- On the plain page below: **Record deposit** (the screen's one gradient button) and **Withdrawal** side by side, with **Submit today's collections** full width beneath them.
+- On the plain page below: **Record deposit** (the screen's one gradient button) full width, with **Submit today's collections** beneath it. Design A had a **Withdrawal** button beside Record deposit; it was removed with collector withdrawal requests (owner decision, 15 Nov 2026).
 - **Recent** records, with **See all** opening the History tab.
 
-**Record deposit** opens the payment flow (below). Today's total and the recent list aren't connected yet: they show GH₵ 0.00 and "No collections recorded today". Withdrawal and Submit stay enabled and show a short message saying the feature isn't available yet, rather than being greyed out with no reason.
+**Record deposit** opens the payment flow (below). Today's total and the recent list aren't connected yet: they show GH₵ 0.00 and "No collections recorded today". Submit stays enabled and shows a short message saying the feature isn't available yet, rather than being greyed out with no reason.
 
 History (`lib/home/history_screen.dart`), design Y1, "wash header" (12 Nov 2026):
 
 - The same wash header as home (`lib/common/wash_header.dart`), with the title and today's record count and total on a glass strip.
-- Filter chips on the plain page: All, Deposits, Shares, Withdrawals. The selected chip uses the soft indigo pill (set in the theme's `chipTheme`).
+- Filter chips on the plain page: All, Deposits, Shares (Withdrawals was dropped with collector withdrawal requests, 15 Nov 2026). The selected chip uses the soft indigo pill (set in the theme's `chipTheme`).
 - Until the backend can list a collector's records, the count and total show zero and the list shows an empty state that names the selected filter ("No share payments yet"). Which record types each filter matches will follow the backend's transaction types.
 
 If the session ends while a screen is open on top of the tabs (such as the payment screens), the app closes it and goes back to sign-in.

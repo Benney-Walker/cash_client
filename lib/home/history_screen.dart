@@ -7,14 +7,14 @@ import '../theme/app_gradients.dart';
 
 /// Which records the history shows.
 ///
-/// These are the filters from the approved design (Y1). The record types
-/// they match will come from the backend once it can list a collector's
-/// records.
+/// The filters from the approved design (Y1), less Withdrawals: collector
+/// withdrawal requests were removed (owner decision 2026-11-15). Deposits
+/// are savings deposits and Shares are share purchases, the backend's two
+/// collector payment types.
 enum HistoryFilter {
   all('All', 'records'),
   deposits('Deposits', 'deposits'),
-  shares('Shares', 'share payments'),
-  withdrawals('Withdrawals', 'withdrawal requests');
+  shares('Shares', 'share payments');
 
   const HistoryFilter(this.label, this.plural);
 
@@ -161,8 +161,7 @@ class _EmptyHistory extends StatelessWidget {
             ),
             const SizedBox(height: 4),
             Text(
-              'Your deposits, share payments and withdrawal requests will '
-              'show here.',
+              'Your deposits and share payments will show here.',
               textAlign: TextAlign.center,
               style: textTheme.bodyMedium
                   ?.copyWith(color: scheme.onSurfaceVariant),

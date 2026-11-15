@@ -17,9 +17,11 @@ import '../theme/app_status_colors.dart';
 ///
 /// Record deposit opens the payment flow. Today's totals and the recent
 /// list aren't connected to the backend yet, so they show an empty day;
-/// Withdrawal and Submit explain that they're not available. Those buttons
-/// stay enabled on purpose: a disabled button gives no reason, a message
-/// does.
+/// Submit explains that it's not available. That button stays enabled on
+/// purpose: a disabled button gives no reason, a message does.
+///
+/// There's no Withdrawal button: collector withdrawal requests were removed
+/// (owner decision 2026-11-15). Members withdraw at a branch office.
 class HomeScreen extends StatelessWidget {
   const HomeScreen({
     super.key,
@@ -50,10 +52,6 @@ class HomeScreen extends StatelessWidget {
   /// For the greeting; replaceable in tests.
   final DateTime Function() now;
 
-  // Two buttons share a row, so they use less side padding than the theme
-  // default to keep "Record deposit" on one line on a 360dp phone.
-  static const _compactPadding = EdgeInsets.symmetric(horizontal: 12);
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -81,37 +79,13 @@ class HomeScreen extends StatelessWidget {
                     ),
                     const SizedBox(height: 12),
                   ],
-                  Row(
-                    children: [
-                      Expanded(
-                        child: GradientButton(
-                          key: const Key('home.recordDeposit'),
-                          padding: _compactPadding,
-                          onPressed: onRecordDeposit,
-                          child: const _IconLabel(
-                            icon: Icons.add,
-                            label: 'Record deposit',
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: OutlinedButton(
-                          key: const Key('home.withdrawal'),
-                          style: const ButtonStyle(
-                            padding: WidgetStatePropertyAll(_compactPadding),
-                          ),
-                          onPressed: () => _notAvailable(
-                            context,
-                            "Withdrawal requests aren't available yet.",
-                          ),
-                          child: const _IconLabel(
-                            icon: Icons.north_east,
-                            label: 'Withdrawal',
-                          ),
-                        ),
-                      ),
-                    ],
+                  GradientButton(
+                    key: const Key('home.recordDeposit'),
+                    onPressed: onRecordDeposit,
+                    child: const _IconLabel(
+                      icon: Icons.add,
+                      label: 'Record deposit',
+                    ),
                   ),
                   const SizedBox(height: 8),
                   OutlinedButton.icon(

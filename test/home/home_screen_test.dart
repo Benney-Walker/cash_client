@@ -87,20 +87,21 @@ void main() {
     expect(find.byType(SnackBar), findsNothing);
   });
 
-  testWidgets('Withdrawal and Submit explain they are not available yet',
-      (tester) async {
+  testWidgets('Submit explains it is not available yet', (tester) async {
     await pumpHome(tester);
 
-    for (final (key, words) in [
-      ('home.withdrawal', 'Withdrawal requests'),
-      ('home.submitDay', "Submitting the day's collections"),
-    ]) {
-      final button = find.byKey(Key(key));
-      await tester.ensureVisible(button);
-      await tester.tap(button);
-      await tester.pump();
-      expect(find.textContaining(words), findsOneWidget, reason: key);
-    }
+    final button = find.byKey(const Key('home.submitDay'));
+    await tester.ensureVisible(button);
+    await tester.tap(button);
+    await tester.pump();
+    expect(find.textContaining("Submitting the day's collections"),
+        findsOneWidget);
+  });
+
+  testWidgets('there is no withdrawal button', (tester) async {
+    await pumpHome(tester);
+    expect(find.byKey(const Key('home.withdrawal')), findsNothing);
+    expect(find.textContaining('Withdrawal'), findsNothing);
   });
 
   testWidgets('See all opens the history', (tester) async {
@@ -128,7 +129,6 @@ void main() {
 
     for (final key in [
       'home.recordDeposit',
-      'home.withdrawal',
       'home.submitDay',
     ]) {
       expect(tester.getSize(find.byKey(Key(key))).height,
