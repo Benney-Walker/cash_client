@@ -4,25 +4,59 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../common/gradient_wash.dart';
+import '../common/money.dart';
+import '../outbox/outbox_store.dart';
 import '../theme/app_gradients.dart';
 import '../theme/app_status_colors.dart';
 import 'collector_models.dart';
 
-/// Shown once the backend has saved the payment.
+/// Shown once the payment is safe: saved by the backend, or saved on the
+/// phone when there was no connection.
 ///
-/// The payment is PENDING for its 10-minute correction window; the member's
-/// balance and SMS follow when it closes (decision D39). The countdown runs
-/// on the phone's monotonic clock from the window length the server sent,
-/// so a wrong phone clock can't shorten or stretch it.
+/// Saved by the backend, it's PENDING for its 10-minute correction window;
+/// the member's balance and SMS follow when it closes (decision D39). That
+/// countdown runs on the phone's monotonic clock from the window length the
+/// server sent, so a wrong phone clock can't shorten or stretch it.
+///
+/// Saved on the phone, the app counts the 10 minutes itself from when it
+/// was recorded, then sends it once there's a connection (decision D40).
 class PaymentSavedScreen extends StatefulWidget {
-  const PaymentSavedScreen({
+  PaymentSavedScreen({
     super.key,
-    required this.payment,
+    required CollectorPayment payment,
     required this.onDone,
-  });
+  })  : amount = payment.amount,
+        type = payment.type,
+        memberName = payment.memberName,
+        accountNumber = payment.accountNumber,
+        queued = null,
+        _window = payment.correctionWindow,
+        _now = DateTime.now;
 
-  final CollectorPayment payment;
+  /// The payment couldn't reach the backend and is in the outbox.
+  PaymentSavedScreen.queued({
+    super.key,
+    required OutboxPayment payment,
+    required this.onDone,
+    DateTime Function()? now,
+  })  : amount = payment.amount,
+        type = payment.type,
+        memberName = payment.memberName,
+        accountNumber = payment.accountNumber,
+        queued = payment,
+        _window = Duration.zero,
+        _now = now ?? DateTime.now;
+
+  final Cedis amount;
+  final PaymentType type;
+  final String memberName;
+  final String accountNumber;
+  final OutboxPayment? queued;
   final VoidCallback onDone;
+  final Duration _window;
+  final DateTime Function() _now;
+
+  bool get isQueued => queued != null;
 
   @override
   State<PaymentSavedScreen> createState() => _PaymentSavedScreenState();
@@ -33,7 +67,9 @@ class _PaymentSavedScreenState extends State<PaymentSavedScreen> {
   Timer? _ticker;
 
   Duration get _left {
-    final left = widget.payment.correctionWindow - _clock.elapsed;
+    final queued = widget.queued;
+    if (queued != null) return queued.timeLeft(widget._now());
+    final left = widget._window - _clock.elapsed;
     return left.isNegative ? Duration.zero : left;
   }
 
@@ -57,7 +93,7 @@ class _PaymentSavedScreenState extends State<PaymentSavedScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final payment = widget.payment;
+    final queued = widget.isQueued;
     final theme = Theme.of(context);
     final textTheme = theme.textTheme;
     final scheme = theme.colorScheme;
@@ -91,11 +127,16 @@ class _PaymentSavedScreenState extends State<PaymentSavedScreen> {
                   ),
                   child: Column(
                     children: [
-                      Icon(Icons.check_circle_outline,
-                          size: 44, color: gradients.panelText),
+                      Icon(
+                        queued
+                            ? Icons.phone_android_outlined
+                            : Icons.check_circle_outline,
+                        size: 44,
+                        color: gradients.panelText,
+                      ),
                       const SizedBox(height: 8),
                       Text(
-                        'Payment saved',
+                        queued ? 'Saved on this phone' : 'Payment saved',
                         key: const Key('saved.title'),
                         style: textTheme.titleLarge?.copyWith(
                           color: gradients.panelText,
@@ -104,7 +145,7 @@ class _PaymentSavedScreenState extends State<PaymentSavedScreen> {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        payment.amount.format(),
+                        widget.amount.format(),
                         key: const Key('saved.amount'),
                         style: textTheme.headlineMedium?.copyWith(
                           color: gradients.panelText,
@@ -113,7 +154,7 @@ class _PaymentSavedScreenState extends State<PaymentSavedScreen> {
                         ),
                       ),
                       Text(
-                        '${payment.type.description} · ${payment.memberName}',
+                        '${widget.type.description} · ${widget.memberName}',
                         textAlign: TextAlign.center,
                         style: textTheme.bodyMedium
                             ?.copyWith(color: gradients.panelTextSecondary),
@@ -129,18 +170,30 @@ class _PaymentSavedScreenState extends State<PaymentSavedScreen> {
                   children: [
                     Align(
                       alignment: Alignment.centerLeft,
-                      child: _PendingChip(left: left, status: status),
+                      child: _PendingChip(
+                        left: left,
+                        status: status,
+                        queued: queued,
+                      ),
                     ),
                     const SizedBox(height: 12),
                     Text(
-                      "The member's balance is updated and they get an SMS "
-                      'when the 10 minutes are up.',
+                      queued
+                          ? "The server couldn't be reached, so the payment "
+                              'is saved on this phone. It is sent when its 10 '
+                              'minutes '
+                              "are up and you're online. The member's "
+                              'balance and SMS follow then. You can follow it '
+                              'in Outbox on the home screen.'
+                          : "The member's balance is updated and they get an "
+                              'SMS when the 10 minutes are up.',
+                      key: const Key('saved.explanation'),
                       style: textTheme.bodyMedium
                           ?.copyWith(color: scheme.onSurfaceVariant),
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      'Account ${payment.accountNumber}',
+                      'Account ${widget.accountNumber}',
                       style: textTheme.bodyMedium
                           ?.copyWith(color: scheme.onSurfaceVariant),
                     ),
@@ -161,18 +214,26 @@ class _PaymentSavedScreenState extends State<PaymentSavedScreen> {
   }
 }
 
-/// PENDING is a warning status: an icon and a label, never colour alone.
+/// PENDING and waiting are warning statuses: an icon and a label, never
+/// colour alone.
 class _PendingChip extends StatelessWidget {
-  const _PendingChip({required this.left, required this.status});
+  const _PendingChip({
+    required this.left,
+    required this.status,
+    required this.queued,
+  });
 
   final Duration left;
   final AppStatusColors status;
+  final bool queued;
 
   @override
   Widget build(BuildContext context) {
-    final label = left > Duration.zero
-        ? 'Pending · ${formatCountdown(left)} left'
-        : 'Pending · being applied';
+    final label = queued
+        ? outboxStatusLabel(left)
+        : left > Duration.zero
+            ? 'Pending · ${formatCountdown(left)} left'
+            : 'Pending · being applied';
     return DecoratedBox(
       decoration: BoxDecoration(
         color: status.warningContainer,
@@ -200,6 +261,12 @@ class _PendingChip extends StatelessWidget {
     );
   }
 }
+
+/// The status of a payment waiting in the outbox: "Waiting · 9:58" inside
+/// its 10 minutes, then "Sends when online".
+String outboxStatusLabel(Duration left) => left > Duration.zero
+    ? 'Waiting · ${formatCountdown(left)}'
+    : 'Sends when online';
 
 /// "9:58".
 String formatCountdown(Duration duration) {

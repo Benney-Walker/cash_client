@@ -93,6 +93,12 @@ class CollectorMember {
 /// A payment's state on the backend (`TransactionStatus`). A collector
 /// payment is PENDING during its 10-minute correction window, then
 /// COMPLETED (balance updated, member texted) or FAILED.
+/// How long a collector can correct a record after it's saved (owner
+/// decision 2026-11-07). The backend counts it for payments it saves
+/// online; the app counts it for payments recorded offline, and sends those
+/// only once it's over (backend `CollectorRules.CORRECTION_WINDOW`).
+const correctionWindow = Duration(minutes: 10);
+
 enum PaymentStatus {
   pending,
   completed,

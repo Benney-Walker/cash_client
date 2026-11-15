@@ -170,6 +170,58 @@ void main() {
     });
   });
 
+  test('an offline payment carries recordedAt in the backend\'s time',
+      () async {
+    final backend = FakeCollectorBackend.working();
+
+    await backend.api.recordPayment(
+      idempotencyKey: 'k',
+      type: PaymentType.savings,
+      accountNumber: '1002345678',
+      amount: const Cedis.pesewas(100),
+      recordedAt: DateTime.utc(2026, 11, 15, 9, 5, 7),
+    );
+
+    final body = jsonDecode(backend.paymentRequests.single.body) as Map;
+    expect(body['recordedAt'], '2026-11-15T09:05:07');
+  });
+
+  test('online payments leave recordedAt out', () async {
+    final backend = FakeCollectorBackend.working();
+    await backend.api.recordPayment(
+      idempotencyKey: 'k',
+      type: PaymentType.savings,
+      accountNumber: '1',
+      amount: const Cedis.pesewas(100),
+    );
+    final body = jsonDecode(backend.paymentRequests.single.body) as Map;
+    expect(body.containsKey('recordedAt'), isFalse);
+  });
+
+  test('backend time is Accra time, which is UTC', () {
+    // 11:30 at UTC+2 is 09:30 in Accra.
+    final elsewhere = DateTime.parse('2026-11-15T11:30:00+02:00');
+    expect(backendLocalTime(elsewhere), '2026-11-15T09:30:00');
+  });
+
+  test('refusals are the backend turning a payment down, not failures to '
+      'reach it', () {
+    for (final status in [400, 403, 404, 409, 422]) {
+      expect(isRefusal(ApiException.fromResponse(status, '{}')), isTrue,
+          reason: '$status');
+    }
+    for (final error in [
+      const ApiException(ApiFailure.network),
+      const ApiException(ApiFailure.unauthorized),
+      ApiException.fromResponse(500, '{}'),
+      ApiException.fromResponse(503, '{}'),
+      const ApiException(ApiFailure.unexpectedResponse, statusCode: 200),
+      StateError('x'),
+    ]) {
+      expect(isRefusal(error), isFalse, reason: '$error');
+    }
+  });
+
   test('idempotency keys are random version 4 UUIDs', () {
     final keys = {for (var i = 0; i < 200; i++) newIdempotencyKey()};
     expect(keys, hasLength(200));

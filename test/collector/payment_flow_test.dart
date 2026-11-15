@@ -6,6 +6,7 @@ import 'package:cash_client/collector/payment_flow.dart';
 import 'package:cash_client/collector/payment_saved_screen.dart';
 import 'package:cash_client/collector/record_payment_screen.dart';
 import 'package:cash_client/common/money.dart';
+import 'package:cash_client/outbox/outbox_store.dart';
 import 'package:cash_client/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -122,6 +123,8 @@ void main() {
           draft: draft,
           api: backend.api,
           onSaved: (_, _) {},
+          saveOffline: (_, _) => throw UnimplementedError(),
+          onSavedOffline: (_, _) {},
         ),
       ));
 
@@ -142,49 +145,77 @@ void main() {
           draft: draft,
           api: backend.api,
           onSaved: (_, p) => saved = p,
+          saveOffline: (_, _) => throw StateError('must not be saved'),
+          onSavedOffline: (_, _) {},
         ),
       ));
 
       await tapKey(tester, 'confirm.record');
 
+      // The backend's reason, word for word, and nothing is kept.
       expect(find.text("This member isn't in your branch"), findsOneWidget);
       expect(saved, isNull);
     });
 
-    testWidgets('after a dropped connection, retrying reuses the same key',
-        (tester) async {
-      var dropped = true;
-      final backend = FakeCollectorBackend((request) {
-        if (dropped) throw http.ClientException('reset');
-        final body = jsonDecode(request.body) as Map<String, dynamic>;
-        return http.Response(
-          paymentBody(idempotencyKey: body['idempotencyKey'] as String),
-          200,
-        );
-      });
-      CollectorPayment? saved;
+    testWidgets('without a connection, the payment is saved on the phone '
+        'with the key it was sent with', (tester) async {
+      final backend = FakeCollectorBackend(
+        (_) => throw http.ClientException('no connection'),
+      );
+      String? offlineKey;
+      OutboxPayment? queued;
       await tester.pumpWidget(MaterialApp(
         theme: AppTheme.light,
         home: ConfirmPaymentScreen(
           draft: draft,
           api: backend.api,
-          onSaved: (_, p) => saved = p,
+          onSaved: (_, _) => fail('the backend never saved it'),
+          saveOffline: (d, key) async {
+            offlineKey = key;
+            return queuedPayment(
+              key: key,
+              recordedAt: DateTime.utc(2026, 11, 15, 10),
+            );
+          },
+          onSavedOffline: (_, p) => queued = p,
         ),
       ));
 
       await tapKey(tester, 'confirm.record');
-      expect(find.textContaining("won't be recorded twice"), findsOneWidget);
 
-      dropped = false;
+      final sentKey = (jsonDecode(backend.requests.single.body)
+          as Map<String, dynamic>)['idempotencyKey'];
+      expect(offlineKey, sentKey);
+      expect(queued?.idempotencyKey, sentKey);
+    });
+
+    testWidgets('if saving on the phone fails too, the collector can try '
+        'again with the same key', (tester) async {
+      final backend = FakeCollectorBackend(
+        (_) => throw http.ClientException('no connection'),
+      );
+      await tester.pumpWidget(MaterialApp(
+        theme: AppTheme.light,
+        home: ConfirmPaymentScreen(
+          draft: draft,
+          api: backend.api,
+          onSaved: (_, _) {},
+          saveOffline: (_, _) async => throw StateError('disk full'),
+          onSavedOffline: (_, _) {},
+        ),
+      ));
+
       await tapKey(tester, 'confirm.record');
+      expect(find.textContaining("couldn't be saved on this phone"),
+          findsOneWidget);
 
-      expect(saved, isNotNull);
-      final keys = [
+      await tapKey(tester, 'confirm.record');
+      final keys = {
         for (final r in backend.requests)
           (jsonDecode(r.body) as Map<String, dynamic>)['idempotencyKey'],
-      ];
-      expect(keys, hasLength(2));
-      expect(keys.toSet(), hasLength(1));
+      };
+      expect(backend.requests, hasLength(2));
+      expect(keys, hasLength(1));
     });
   });
 
@@ -202,6 +233,23 @@ void main() {
       expect(find.text('Payment saved'), findsOneWidget);
       expect(find.text('GH₵ 50.00'), findsOneWidget);
       expect(find.textContaining('Pending · 10:00 left'), findsOneWidget);
+    });
+
+    testWidgets('a payment kept on the phone counts its own 10 minutes',
+        (tester) async {
+      final recorded = DateTime.utc(2026, 11, 15, 10);
+      await tester.pumpWidget(MaterialApp(
+        theme: AppTheme.light,
+        home: PaymentSavedScreen.queued(
+          payment: queuedPayment(recordedAt: recorded),
+          onDone: () {},
+          now: () => recorded.add(const Duration(minutes: 3)),
+        ),
+      ));
+
+      expect(find.text('Saved on this phone'), findsOneWidget);
+      expect(find.text('Waiting · 7:00'), findsOneWidget);
+      expect(find.textContaining('Outbox'), findsOneWidget);
     });
 
     test('countdown reads minutes and seconds', () {
@@ -223,6 +271,8 @@ void main() {
                 context,
                 directory: services.members,
                 api: services.collectorApi,
+                saveOffline: (draft, key) =>
+                    services.outbox.add(draft, idempotencyKey: key),
               ),
               child: const Text('Home'),
             ),
@@ -254,3 +304,4 @@ void main() {
     expect(find.text('Confirm payment'), findsNothing);
   });
 }
+

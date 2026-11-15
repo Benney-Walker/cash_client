@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../api/api_exception.dart';
 import '../common/gradient_button.dart';
+import '../outbox/outbox_store.dart';
 import '../theme/app_gradients.dart';
 import '../theme/app_status_colors.dart';
 import 'collector_api.dart';
@@ -12,17 +14,29 @@ import 'record_payment_screen.dart';
 ///
 /// Paying into the wrong account is the costliest mistake a collector can
 /// make, so the payment is only sent from here.
+///
+/// Without a connection, the payment is saved on the phone instead and sent
+/// later (app spec 2.3). When the backend refuses it, its reason is shown
+/// here word for word and nothing is saved.
 class ConfirmPaymentScreen extends StatefulWidget {
   const ConfirmPaymentScreen({
     super.key,
     required this.draft,
     required this.api,
     required this.onSaved,
+    required this.saveOffline,
+    required this.onSavedOffline,
   });
 
   final PaymentDraft draft;
   final CollectorApi api;
   final void Function(BuildContext context, CollectorPayment payment) onSaved;
+
+  /// Keeps the payment in the outbox, with this screen's idempotency key.
+  final Future<OutboxPayment> Function(PaymentDraft draft, String key)
+      saveOffline;
+  final void Function(BuildContext context, OutboxPayment payment)
+      onSavedOffline;
 
   @override
   State<ConfirmPaymentScreen> createState() => _ConfirmPaymentScreenState();
@@ -56,17 +70,42 @@ class _ConfirmPaymentScreenState extends State<ConfirmPaymentScreen> {
       if (!mounted) return;
       widget.onSaved(context, payment);
     } catch (error) {
+      if (_couldNotReachBackend(error)) {
+        await _keepOnPhone();
+        return;
+      }
       if (!mounted) return;
       setState(() {
         _sending = false;
         _error = collectorErrorMessage(
           error,
-          // The request may or may not have reached the backend. Retrying
-          // with the same key is safe either way.
-          networkMessage: "Couldn't confirm the payment was saved. Check "
-              "your connection and tap Record payment again. It won't be "
-              'recorded twice.',
+          networkMessage: "Couldn't reach the server. Try again.",
         );
+      });
+    }
+  }
+
+  /// No connection, a timeout or a server fault. The request may or may not
+  /// have reached the backend; either way it's saved on the phone with the
+  /// same key, so the sync either gets the saved payment back or records
+  /// it, never both.
+  static bool _couldNotReachBackend(Object error) =>
+      error is ApiException &&
+      (error.failure == ApiFailure.network ||
+          error.failure == ApiFailure.server);
+
+  Future<void> _keepOnPhone() async {
+    try {
+      final queued = await widget.saveOffline(widget.draft, _idempotencyKey);
+      if (!mounted) return;
+      widget.onSavedOffline(context, queued);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _sending = false;
+        _error = "The server couldn't be reached and the payment couldn't "
+            "be saved on this phone. Tap Record payment to try again. It "
+            "won't be recorded twice.";
       });
     }
   }

@@ -49,12 +49,17 @@ class CollectorApi {
   /// Send the same [idempotencyKey] again to retry after a failure: if the
   /// first request did reach the backend, it returns that payment instead
   /// of recording a second one.
+  ///
+  /// [recordedAt] is set only for a payment recorded offline. The app sends
+  /// those after their 10 minutes, so the backend applies them straight
+  /// away instead of holding them as PENDING.
   Future<CollectorPayment> recordPayment({
     required String idempotencyKey,
     required PaymentType type,
     required String accountNumber,
     required Cedis amount,
     String? description,
+    DateTime? recordedAt,
   }) async {
     final note = description?.trim();
     // The amount is written as a JSON number literal from its exact decimal
@@ -66,6 +71,7 @@ class CollectorApi {
         '"accountNumber":${jsonEncode(accountNumber)},'
         '"amount":${amount.toDecimalString()}'
         '${note == null || note.isEmpty ? '' : ',"description":${jsonEncode(note)}'}'
+        '${recordedAt == null ? '' : ',"recordedAt":${jsonEncode(backendLocalTime(recordedAt))}'}'
         '}';
     final response = await _send(
       () => _client.post(
@@ -110,6 +116,37 @@ class CollectorApi {
 
   static ApiException _unexpected() =>
       const ApiException(ApiFailure.unexpectedResponse, statusCode: 200);
+}
+
+/// [time] as the backend's `LocalDateTime` text, such as
+/// `2026-11-15T10:00:00`.
+///
+/// The backend's clock runs on Africa/Accra time, which is UTC all year
+/// (Ghana has no daylight saving), so the UTC wall time is exact whatever
+/// time zone the phone is set to.
+String backendLocalTime(DateTime time) {
+  final t = time.toUtc();
+  String two(int n) => n.toString().padLeft(2, '0');
+  return '${t.year.toString().padLeft(4, '0')}-${two(t.month)}-${two(t.day)}'
+      'T${two(t.hour)}:${two(t.minute)}:${two(t.second)}';
+}
+
+/// True when the backend looked at a payment and turned it down, as opposed
+/// to the request not getting through (no connection, a timeout, a server
+/// fault, an ended session). Sending it again unchanged would get the same
+/// answer until someone at the office fixes the cause.
+bool isRefusal(Object error) {
+  if (error is! ApiException) return false;
+  return switch (error.failure) {
+    ApiFailure.validation ||
+    ApiFailure.forbidden ||
+    ApiFailure.notFound ||
+    ApiFailure.conflict =>
+      true,
+    ApiFailure.unexpectedResponse =>
+      (error.statusCode ?? 0) >= 400 && (error.statusCode ?? 0) < 500,
+    _ => false,
+  };
 }
 
 /// What to tell the collector when a collector request fails. The backend's

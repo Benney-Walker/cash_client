@@ -10,14 +10,18 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   late int seeAllTaps;
   late int recordTaps;
+  late int outboxTaps;
 
   Future<void> pumpHome(
     WidgetTester tester, {
     ThemeData? theme,
     DateTime? now,
+    int outboxWaiting = 0,
+    int outboxRefused = 0,
   }) async {
     seeAllTaps = 0;
     recordTaps = 0;
+    outboxTaps = 0;
     await tester.pumpWidget(
       MaterialApp(
         theme: theme ?? AppTheme.light,
@@ -25,6 +29,9 @@ void main() {
           staffName: 'KOFI MENSAH',
           onSeeAll: () => seeAllTaps++,
           onRecordDeposit: () => recordTaps++,
+          outboxWaiting: outboxWaiting,
+          outboxRefused: outboxRefused,
+          onOpenOutbox: () => outboxTaps++,
           now: () => now ?? DateTime(2026, 11, 10, 9),
         ),
       ),
@@ -156,5 +163,36 @@ void main() {
     expect(find.byType(GradientButton), findsOneWidget);
     expect(tester.widget(find.byKey(const Key('home.recordDeposit'))),
         isA<GradientButton>());
+  });
+
+  group('outbox row', () {
+    testWidgets('is hidden when nothing is waiting', (tester) async {
+      await pumpHome(tester);
+      expect(find.byKey(const Key('home.outbox')), findsNothing);
+    });
+
+    testWidgets('shows waiting and refused counts and opens the Outbox',
+        (tester) async {
+      await pumpHome(tester, outboxWaiting: 3, outboxRefused: 1);
+
+      expect(find.text('Outbox'), findsOneWidget);
+      final summary = tester.widget<Text>(
+        find.byKey(const Key('home.outboxSummary')),
+      );
+      expect(summary.textSpan!.toPlainText(), contains('3 waiting'));
+      expect(summary.textSpan!.toPlainText(), contains('1 refused'));
+
+      await tester.tap(find.byKey(const Key('home.outbox')));
+      expect(outboxTaps, 1);
+    });
+
+    testWidgets('sits above Record deposit', (tester) async {
+      await pumpHome(tester, outboxRefused: 1);
+      expect(
+        tester.getTopLeft(find.byKey(const Key('home.outbox'))).dy,
+        lessThan(
+            tester.getTopLeft(find.byKey(const Key('home.recordDeposit'))).dy),
+      );
+    });
   });
 }

@@ -6,10 +6,14 @@ import '../common/gradient_button.dart';
 import '../common/wash_header.dart';
 import '../common/names.dart';
 import '../theme/app_gradients.dart';
+import '../theme/app_status_colors.dart';
 
 /// The collector's home, design H1 ("wash header"): the pale gradient wash
 /// across the top with the greeting and today's total on a glass card,
 /// then the actions and recent records on the plain page.
+///
+/// When payments are waiting on the phone or were refused, an Outbox row
+/// sits above the actions (design R2) and opens the Outbox.
 ///
 /// Record deposit opens the payment flow. Today's totals and the recent
 /// list aren't connected to the backend yet, so they show an empty day;
@@ -22,6 +26,9 @@ class HomeScreen extends StatelessWidget {
     required this.staffName,
     required this.onSeeAll,
     required this.onRecordDeposit,
+    this.outboxWaiting = 0,
+    this.outboxRefused = 0,
+    this.onOpenOutbox,
     this.now = DateTime.now,
   });
 
@@ -33,6 +40,12 @@ class HomeScreen extends StatelessWidget {
 
   /// Opens the record-payment flow (savings deposit or share purchase).
   final VoidCallback onRecordDeposit;
+
+  /// Payments on the phone the backend doesn't have yet. The Outbox row
+  /// only shows when there's at least one.
+  final int outboxWaiting;
+  final int outboxRefused;
+  final VoidCallback? onOpenOutbox;
 
   /// For the greeting; replaceable in tests.
   final DateTime Function() now;
@@ -60,6 +73,14 @@ class HomeScreen extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  if (outboxWaiting + outboxRefused > 0) ...[
+                    _OutboxRow(
+                      waiting: outboxWaiting,
+                      refused: outboxRefused,
+                      onTap: onOpenOutbox,
+                    ),
+                    const SizedBox(height: 12),
+                  ],
                   Row(
                     children: [
                       Expanded(
@@ -215,6 +236,63 @@ class _TodayCard extends StatelessWidget {
           const SizedBox(height: 2),
           Text('No records yet today', style: label),
         ],
+      ),
+    );
+  }
+}
+
+/// "Outbox · 3 waiting · 1 refused", opening the Outbox.
+class _OutboxRow extends StatelessWidget {
+  const _OutboxRow({
+    required this.waiting,
+    required this.refused,
+    required this.onTap,
+  });
+
+  final int waiting;
+  final int refused;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    final status = AppStatusColors.of(context);
+    final secondary =
+        textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant);
+
+    return Card(
+      margin: EdgeInsets.zero,
+      clipBehavior: Clip.antiAlias,
+      child: ListTile(
+        key: const Key('home.outbox'),
+        onTap: onTap,
+        leading: Icon(Icons.outbox_outlined, color: scheme.primary),
+        title: const Text('Outbox'),
+        subtitle: Text.rich(
+          TextSpan(
+            children: [
+              if (waiting > 0) TextSpan(text: '$waiting waiting', style: secondary),
+              if (waiting > 0 && refused > 0)
+                TextSpan(text: ' · ', style: secondary),
+              if (refused > 0) ...[
+                WidgetSpan(
+                  alignment: PlaceholderAlignment.middle,
+                  child: Icon(Icons.block, size: 14, color: status.danger),
+                ),
+                TextSpan(
+                  text: ' $refused refused',
+                  style: textTheme.bodyMedium?.copyWith(
+                    color: status.danger,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ],
+          ),
+          key: const Key('home.outboxSummary'),
+        ),
+        trailing: const Icon(Icons.chevron_right),
       ),
     );
   }

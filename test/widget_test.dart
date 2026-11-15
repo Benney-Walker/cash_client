@@ -6,6 +6,7 @@ import 'package:cash_client/settings/theme_controller.dart';
 import 'package:cash_client/theme/app_status_colors.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
 
 import 'support/fakes.dart';
 
@@ -13,6 +14,7 @@ void main() {
   late SessionManager sessions;
   late ThemeController theme;
   late MemoryMemberCache memberCache;
+  late MemoryOutboxStore outboxStore;
   late AppServices services;
 
   Future<void> pumpApp(
@@ -21,12 +23,19 @@ void main() {
     FakeRefreshApi? backend,
     ThemeMode? savedTheme,
     FakeCollectorBackend? collector,
+    MemoryOutboxStore? outbox,
   }) async {
     memberCache = MemoryMemberCache();
-    services = testServices(backend: collector, cache: memberCache);
+    outboxStore = outbox ?? MemoryOutboxStore();
     sessions = SessionManager(
       api: (backend ?? FakeRefreshApi(FakeRefreshApi.issues('new.access.token'))).api,
       store: store ?? MemorySessionStore(),
+    );
+    services = testServices(
+      backend: collector,
+      cache: memberCache,
+      outboxStore: outboxStore,
+      staffId: () => sessions.session?.staffId,
     );
     theme = ThemeController(MemoryThemeModeStore(savedTheme));
     await theme.load();
@@ -224,6 +233,83 @@ void main() {
 
       expect(memberCache.saved, isNull);
       expect(memberCache.clears, greaterThan(0));
+    });
+  });
+
+  group('offline payments', () {
+    // A payment recorded a minute ago: inside its 10 minutes for the rest of
+    // the test, so the sync leaves it alone.
+    MemoryOutboxStore oneWaiting() => MemoryOutboxStore([
+          queuedPayment(
+            recordedAt: DateTime.now().subtract(const Duration(minutes: 1)),
+          ),
+        ]);
+
+    testWidgets('without a connection, a payment is saved on the phone and '
+        'shows in the Outbox', (tester) async {
+      final collector = FakeCollectorBackend((request) {
+        if (request.method == 'GET') {
+          return http.Response(membersBody(const [amaOwusu]), 200);
+        }
+        throw http.ClientException('no connection');
+      });
+      await pumpApp(
+        tester,
+        store: MemorySessionStore(collectorSession),
+        collector: collector,
+      );
+      expect(find.byKey(const Key('home.outbox')), findsNothing);
+
+      await tapKey(tester, 'home.recordDeposit');
+      await tester.tap(find.text('Ama Owusu'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const Key('record.amount')), '50');
+      await tapKey(tester, 'record.continue');
+      await tester.tap(find.byKey(const Key('confirm.record')));
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+
+      expect(find.text('Saved on this phone'), findsOneWidget);
+      expect(outboxStore.all.single.amount.pesewas, 5000);
+
+      await tester.tap(find.byKey(const Key('saved.done')));
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      expect(find.byKey(const Key('home.outbox')), findsOneWidget);
+      expect(find.text('1 waiting'), findsOneWidget);
+    });
+
+    testWidgets('signing out with unsent payments asks first and keeps them',
+        (tester) async {
+      final store = MemorySessionStore(collectorSession);
+      await pumpApp(tester, store: store, outbox: oneWaiting());
+
+      await tapKey(tester, 'nav.settings');
+      await tapKey(tester, 'settings.signOut');
+      expect(find.byKey(const Key('signOut.unsentDialog')), findsOneWidget);
+
+      await tapKey(tester, 'signOut.cancel');
+      expect(store.session, isNotNull);
+
+      await tapKey(tester, 'settings.signOut');
+      await tapKey(tester, 'signOut.confirm');
+      expect(store.session, isNull);
+      expect(outboxStore.all, hasLength(1));
+    });
+
+    testWidgets('tapping a refused-payment notification opens the Outbox',
+        (tester) async {
+      await pumpApp(
+        tester,
+        store: MemorySessionStore(collectorSession),
+        outbox: oneWaiting(),
+      );
+
+      services.openOutboxRequest.value = true;
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+
+      expect(find.byKey(const Key('outbox.title')), findsOneWidget);
     });
   });
 }

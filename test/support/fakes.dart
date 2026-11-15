@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:cash_client/app_services.dart';
@@ -8,8 +9,14 @@ import 'package:cash_client/collector/collector_api.dart';
 import 'package:cash_client/collector/collector_models.dart';
 import 'package:cash_client/collector/member_cache.dart';
 import 'package:cash_client/collector/member_directory.dart';
+import 'package:cash_client/common/money.dart';
+import 'package:cash_client/outbox/outbox.dart';
+import 'package:cash_client/outbox/outbox_store.dart';
 import 'package:cash_client/settings/app_info.dart';
 import 'package:cash_client/settings/theme_mode_store.dart';
+import 'package:cash_client/sync/payment_sync.dart';
+import 'package:cash_client/sync/sync_platform.dart';
+import 'package:cash_client/sync/sync_scheduler.dart';
 import 'package:flutter/material.dart' show ThemeMode;
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -255,18 +262,199 @@ class FakeCollectorBackend {
       ];
 }
 
-/// Services for app-level tests.
+/// In-memory [OutboxStore] for tests, with the same rules as the SQLite
+/// one: claims, notify-once refusals.
+class MemoryOutboxStore implements OutboxStore {
+  MemoryOutboxStore([List<OutboxPayment> payments = const []]) {
+    for (final p in payments) {
+      rows[p.idempotencyKey] = _Row(p);
+    }
+  }
+
+  final rows = <String, _Row>{};
+
+  List<OutboxPayment> get all => [for (final r in rows.values) r.payment];
+
+  @override
+  Future<void> add(OutboxPayment payment) async {
+    rows.putIfAbsent(payment.idempotencyKey, () => _Row(payment));
+  }
+
+  @override
+  Future<List<OutboxPayment>> list(String staffId) async {
+    final mine = [
+      for (final r in rows.values)
+        if (r.payment.staffId == staffId) r.payment,
+    ]..sort((a, b) => a.recordedAt.compareTo(b.recordedAt));
+    return mine;
+  }
+
+  @override
+  Future<bool> claim(String key, DateTime now, DateTime until) async {
+    final row = rows[key];
+    if (row == null) return false;
+    final held = row.claimedUntil;
+    if (held != null && !held.isBefore(now)) return false;
+    row.claimedUntil = until;
+    return true;
+  }
+
+  @override
+  Future<void> remove(String key) async {
+    rows.remove(key);
+  }
+
+  @override
+  Future<void> markTried(String key, DateTime at) async {
+    final row = rows[key];
+    if (row == null) return;
+    row.payment = _copy(row.payment, lastTriedAt: at);
+    row.claimedUntil = null;
+  }
+
+  @override
+  Future<bool> markRefused(String key, String reason, DateTime at) async {
+    final row = rows[key];
+    if (row == null) return false;
+    final firstTime = !row.notified;
+    row.notified = true;
+    row.claimedUntil = null;
+    row.payment = _copy(
+      row.payment,
+      refusalReason: reason,
+      refusedAt: row.payment.refusedAt ?? at,
+      lastTriedAt: at,
+    );
+    return firstTime;
+  }
+
+  static OutboxPayment _copy(
+    OutboxPayment p, {
+    String? refusalReason,
+    DateTime? refusedAt,
+    DateTime? lastTriedAt,
+  }) =>
+      OutboxPayment(
+        idempotencyKey: p.idempotencyKey,
+        staffId: p.staffId,
+        memberName: p.memberName,
+        accountNumber: p.accountNumber,
+        type: p.type,
+        amount: p.amount,
+        note: p.note,
+        recordedAt: p.recordedAt,
+        refusalReason: refusalReason ?? p.refusalReason,
+        refusedAt: refusedAt ?? p.refusedAt,
+        lastTriedAt: lastTriedAt ?? p.lastTriedAt,
+      );
+}
+
+class _Row {
+  _Row(this.payment);
+
+  OutboxPayment payment;
+  DateTime? claimedUntil;
+  bool notified = false;
+}
+
+/// An outbox payment recorded by STF001 at [recordedAt].
+OutboxPayment queuedPayment({
+  String key = 'key-1',
+  String staffId = 'STF001',
+  required DateTime recordedAt,
+  String memberName = 'Ama Owusu',
+  String accountNumber = '1002345678',
+  PaymentType type = PaymentType.savings,
+  int pesewas = 5000,
+  String? refusalReason,
+}) =>
+    OutboxPayment(
+      idempotencyKey: key,
+      staffId: staffId,
+      memberName: memberName,
+      accountNumber: accountNumber,
+      type: type,
+      amount: Cedis.pesewas(pesewas),
+      recordedAt: recordedAt.toUtc(),
+      refusalReason: refusalReason,
+      refusedAt: refusalReason == null ? null : recordedAt.toUtc(),
+    );
+
+/// Records the refused-payment notifications and permission requests.
+class FakeNotifications implements AppNotifications {
+  final shown = <List<OutboxPayment>>[];
+  int permissionRequests = 0;
+
+  @override
+  Future<void> refused(List<OutboxPayment> payments) async {
+    shown.add(List.of(payments));
+  }
+
+  @override
+  Future<void> requestPermission() async {
+    permissionRequests++;
+  }
+}
+
+class FakeConnectivity implements ConnectivityWatcher {
+  final controller = StreamController<bool>.broadcast();
+
+  @override
+  Stream<bool> get changes => controller.stream;
+}
+
+class FakeBackgroundScheduler implements BackgroundScheduler {
+  int periodic = 0;
+  final once = <String, Duration>{};
+
+  @override
+  Future<void> ensurePeriodic() async {
+    periodic++;
+  }
+
+  @override
+  Future<void> scheduleOnce(String key, Duration delay) async {
+    once[key] = delay;
+  }
+}
+
+/// Services for app-level tests. [staffId] is who the outbox belongs to;
+/// app-level tests pass the session manager's.
 AppServices testServices({
   FakeCollectorBackend? backend,
   MemoryMemberCache? cache,
+  MemoryOutboxStore? outboxStore,
+  FakeNotifications? notifications,
+  FakeConnectivity? connectivity,
+  FakeBackgroundScheduler? background,
+  String? Function()? staffId,
+  DateTime Function()? now,
 }) {
   final collector = backend ?? FakeCollectorBackend.working();
+  final store = outboxStore ?? MemoryOutboxStore();
+  final who = staffId ?? () => collectorSession.staffId;
+  final notify = notifications ?? FakeNotifications();
+  final outbox = Outbox(store: store, staffId: who, now: now);
   return AppServices(
     collectorApi: collector.api,
     members: MemberDirectory(
       api: collector.api,
       cache: cache ?? MemoryMemberCache(),
       now: () => DateTime(2026, 11, 15, 8, 12),
+    ),
+    outbox: outbox,
+    sync: SyncScheduler(
+      sync: PaymentSync(
+        store: store,
+        api: collector.api,
+        staffId: who,
+        notifier: notify,
+        now: now,
+      ),
+      outbox: outbox,
+      connectivity: connectivity ?? FakeConnectivity(),
+      background: background ?? FakeBackgroundScheduler(),
+      notifications: notify,
     ),
   );
 }

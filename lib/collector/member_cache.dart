@@ -1,7 +1,7 @@
 import 'package:flutter/foundation.dart';
-import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
+import '../storage/app_database.dart';
 import 'collector_models.dart';
 
 /// The branch member list as last downloaded, and when.
@@ -31,47 +31,13 @@ abstract interface class MemberCache {
 /// [MemberCache] in the app's SQLite database (owner decision 2026-11-15:
 /// SQLite, through sqflite).
 class SqliteMemberCache implements MemberCache {
-  SqliteMemberCache({this.fileName = 'cash_client.db'});
+  SqliteMemberCache(this._db);
 
-  final String fileName;
-  Future<Database>? _db;
+  final AppDatabase _db;
 
   static const _savedAtKey = 'members_saved_at';
 
-  Future<Database> get _database => _db ??= _open();
-
-  Future<Database> _open() async {
-    final path = p.join(await getDatabasesPath(), fileName);
-    return openDatabase(
-      path,
-      version: 1,
-      onConfigure: (db) => db.execute('PRAGMA foreign_keys = ON'),
-      onCreate: (db, version) async {
-        // Members are numbered in the order the backend sent them; account
-        // numbers are unique across the credit union, so they're the key.
-        await db.execute('''
-          CREATE TABLE members (
-            id INTEGER PRIMARY KEY,
-            name TEXT NOT NULL
-          )''');
-        await db.execute('''
-          CREATE TABLE member_accounts (
-            account_number TEXT PRIMARY KEY,
-            member_id INTEGER NOT NULL
-              REFERENCES members (id) ON DELETE CASCADE,
-            payment_type TEXT NOT NULL
-          )''');
-        await db.execute(
-          'CREATE INDEX member_accounts_member ON member_accounts (member_id)',
-        );
-        await db.execute('''
-          CREATE TABLE sync_meta (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL
-          )''');
-      },
-    );
-  }
+  Future<Database> get _database => _db.database;
 
   @override
   Future<SavedMembers?> read() async {
