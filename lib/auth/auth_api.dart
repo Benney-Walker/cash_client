@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../api/api_exception.dart';
+import '../api/endpoint.dart';
 import 'auth_session.dart';
 
 /// Calls the backend's public authentication endpoints. These take no
@@ -131,19 +132,5 @@ class AuthApi {
     return response;
   }
 
-  Uri _endpoint(String path) {
-    if (_baseUrl.isEmpty) {
-      throw const ApiException(ApiFailure.notConfigured);
-    }
-    final base = Uri.tryParse(_baseUrl);
-    if (base == null || !base.hasScheme || base.host.isEmpty) {
-      throw const ApiException(ApiFailure.notConfigured);
-    }
-    // Tolerate a base URL with or without a trailing slash, or with a path
-    // prefix such as a reverse-proxy mount point.
-    final prefix = base.path.endsWith('/')
-        ? base.path.substring(0, base.path.length - 1)
-        : base.path;
-    return base.replace(path: '$prefix$path');
-  }
+  Uri _endpoint(String path) => apiUri(_baseUrl, path);
 }

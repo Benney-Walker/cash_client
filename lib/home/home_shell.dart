@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../app_services.dart';
 import '../auth/auth_session.dart';
+import '../collector/payment_flow.dart';
 import '../settings/app_info.dart';
 import '../settings/settings_screen.dart';
 import '../settings/theme_controller.dart';
@@ -17,12 +19,14 @@ class HomeShell extends StatefulWidget {
     required this.session,
     required this.theme,
     required this.appInfo,
+    required this.services,
     required this.onSignOut,
   });
 
   final AuthSession session;
   final ThemeController theme;
   final AppInfo appInfo;
+  final AppServices services;
   final VoidCallback onSignOut;
 
   @override
@@ -46,6 +50,11 @@ class _HomeShellState extends State<HomeShell> {
           HomeScreen(
             staffName: widget.session.staffName,
             onSeeAll: () => _select(_history),
+            onRecordDeposit: () => startPaymentFlow(
+              context,
+              directory: widget.services.members,
+              api: widget.services.collectorApi,
+            ),
           ),
           const HistoryScreen(),
           SettingsScreen(

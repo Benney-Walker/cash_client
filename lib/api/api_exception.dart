@@ -16,6 +16,13 @@ enum ApiFailure {
   /// 403: signed in, but this role isn't allowed to do that.
   forbidden,
 
+  /// 404: the thing asked for doesn't exist, such as an unknown account.
+  notFound,
+
+  /// 409: the request clashes with the current state, such as a member
+  /// whose first deposit hasn't been made at the office yet.
+  conflict,
+
   /// 400: the backend rejected the request's fields.
   validation,
 
@@ -43,6 +50,8 @@ class ApiException implements Exception {
       400 => ApiFailure.validation,
       401 => ApiFailure.unauthorized,
       403 => ApiFailure.forbidden,
+      404 => ApiFailure.notFound,
+      409 => ApiFailure.conflict,
       >= 500 => ApiFailure.server,
       _ => ApiFailure.unexpectedResponse,
     };

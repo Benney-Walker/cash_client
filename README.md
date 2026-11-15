@@ -10,24 +10,24 @@ The app is a client of the `bankingbackend` Spring Boot API. It holds no busines
 |---|---|
 | Light and dark theme (Indigo Aurora palette, lighter gradient tints, Inter font) | Done |
 | Redesign with the lighter tints (12 Nov 2026) | Done for every screen: sign-in, Home, History and Settings |
-| Home screen layout and bottom bar (Home, History, Settings) | Done. Shows an empty day until the backend endpoints exist |
+| Home screen layout and bottom bar (Home, History, Settings) | Done. Record deposit works; today's totals and recent list not connected yet |
 | Settings: profile, theme choice (system / light / dark), app version and sign-out | Done |
 | Sign-in (collectors only) and sign-out | Done. Tokens kept in secure storage |
 | Automatic token refresh; back to sign-in when the backend ends the session | Done |
 | One device per collector | Not started. Waiting on backend decision D36 |
-| Member account lookup: name and accounts only (online and offline) | Not started. Needs a backend endpoint |
-| Deposits and share payments (online and offline, with sync) | Not started. Needs the backend deposit endpoint |
-| Corrections within 10 minutes | Not started. Needs backend support |
-| Withdrawal requests | Not started. Needs backend support |
+| Member lookup: branch members' names and savings/shares accounts, saved for offline | Done (backend PR #14) |
+| Savings deposits and share purchases | Online recording done (backend PR #14). Offline queue and sync not started |
+| Corrections within 10 minutes | Not started (backend ready in PR #14). The saved screen counts the window down |
+| Withdrawal requests | Not started (backend ready in PR #14) |
 | Location tracking | Not started. Needs backend support |
-| Transaction history | Screen in place, empty. Needs backend support |
+| Transaction history | Screen in place, empty. Backend day summary in PR #14 |
 | Daily cash submission and session ending | Not started. Needs backend support |
 
 ## Requirements
 
 - Flutter SDK with Dart `^3.12.0` (see `pubspec.yaml`)
 - Android SDK for device builds. Android package: `com.bynexlabs.cash_client`. Minimum Android 7.0 (API 24), required by `shared_preferences` (`flutter_secure_storage` needs 6.0)
-- A running `bankingbackend`
+- A running `bankingbackend`. Recording payments needs the collector endpoints from backend PR #14, merged with master from 14 Nov 2026 or later (the JWT filter fix for loading staff roles)
 
 ## Run and test
 
@@ -83,7 +83,7 @@ Home (`lib/home/home_screen.dart`) keeps design A's layout, restyled as design H
 - On the plain page below: **Record deposit** (the screen's one gradient button) and **Withdrawal** side by side, with **Submit today's collections** full width beneath them.
 - **Recent** records, with **See all** opening the History tab.
 
-None of this has backend data yet. Today's total shows GH₵ 0.00 and the recent list shows "No collections recorded today". The three action buttons stay enabled and show a short message saying the feature isn't available yet, rather than being greyed out with no reason.
+**Record deposit** opens the payment flow (below). Today's total and the recent list aren't connected yet: they show GH₵ 0.00 and "No collections recorded today". Withdrawal and Submit stay enabled and show a short message saying the feature isn't available yet, rather than being greyed out with no reason.
 
 History (`lib/home/history_screen.dart`), design Y1, "wash header" (12 Nov 2026):
 
@@ -91,7 +91,32 @@ History (`lib/home/history_screen.dart`), design Y1, "wash header" (12 Nov 2026)
 - Filter chips on the plain page: All, Deposits, Shares, Withdrawals. The selected chip uses the soft indigo pill (set in the theme's `chipTheme`).
 - Until the backend can list a collector's records, the count and total show zero and the list shows an empty state that names the selected filter ("No share payments yet"). Which record types each filter matches will follow the backend's transaction types.
 
-If the session ends while a screen is open on top of the tabs (such as the future deposit screens), the app closes it and goes back to sign-in.
+If the session ends while a screen is open on top of the tabs (such as the payment screens), the app closes it and goes back to sign-in.
+
+## Recording a payment
+
+Design P1, "two screens" (15 Nov 2026), in `lib/collector/`. Collectors record two kinds of payment, matching the backend's `CollectorPaymentType`: a **savings deposit** (into the member's savings account) and a **share purchase** (into their shares account).
+
+1. **Choose member** (`member_picker_screen.dart`). The branch member list from `GET /api/collector/v1/members`: names and savings/shares account numbers only, never other member details. Search by name or account number. When two members share a name, their account numbers show so they can be told apart.
+2. **Record payment** (`record_payment_screen.dart`). Savings or Shares (only the types the member has an account for), the account number, the amount in GH₵ and an optional note (up to 500 characters). Amounts are cedis and pesewas, 2 decimal places (owner decision, 15 Nov 2026), up to GH₵ 999,999,999.99.
+3. **Confirm payment** (`confirm_payment_screen.dart`). Member, account and amount are checked before anything is sent; only this screen sends the payment. Edit goes back.
+4. **Payment saved** (`payment_saved_screen.dart`). Shown once the backend has saved it. The payment is **Pending** for its 10-minute correction window, counted down from the window length the server sent (on the phone's monotonic clock, so a wrong phone clock can't change it); the member's balance and SMS follow when it closes. Done (or back) goes home, never to the confirm screen.
+
+Sending (`collector_api.dart`):
+
+- `POST /api/collector/v1/payments` with `idempotencyKey`, `type` (SAVINGS or SHARES), `accountNumber`, `amount` and optional `description`, through the authenticated client.
+- The amount is held as whole pesewas (`lib/common/money.dart`) and written into the JSON as an exact decimal literal such as `50.50`, so it reaches the backend's `BigDecimal` without passing through a floating-point number.
+- Each payment gets a random UUID idempotency key when the confirm screen opens. If the connection drops, the collector is told the app couldn't confirm the payment was saved and to tap Record payment again: the retry sends the same key, so the backend never records it twice.
+- The backend's own messages for refused payments are shown as they are, for example "This member's first deposit must be made at the office" (409), "This member isn't in your branch" (403), or an account that isn't active (409).
+
+Member list on the phone (`member_cache.dart`, `member_directory.dart`):
+
+- Saved in SQLite through `sqflite` (owner decision, 15 Nov 2026), in `cash_client.db`: tables `members`, `member_accounts` and `sync_meta` (when the list was downloaded). Each download replaces the whole list in one transaction.
+- The picker shows the saved list straight away and downloads a fresh one in the background. Offline, the saved list still works, with a notice saying when it was saved; with nothing saved, it offers Try again.
+- The list is cleared when the collector signs out or the session ends.
+- The SQLite code itself isn't covered by tests (that needs a native SQLite library on the test machine); the logic around it is tested with an in-memory cache.
+
+Not in this step: recording offline and syncing later, corrections within the 10 minutes, and connecting home's totals and the History tab to the backend.
 
 ## Settings
 

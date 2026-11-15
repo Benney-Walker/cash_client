@@ -9,6 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   late int seeAllTaps;
+  late int recordTaps;
 
   Future<void> pumpHome(
     WidgetTester tester, {
@@ -16,12 +17,14 @@ void main() {
     DateTime? now,
   }) async {
     seeAllTaps = 0;
+    recordTaps = 0;
     await tester.pumpWidget(
       MaterialApp(
         theme: theme ?? AppTheme.light,
         home: HomeScreen(
           staffName: 'KOFI MENSAH',
           onSeeAll: () => seeAllTaps++,
+          onRecordDeposit: () => recordTaps++,
           now: () => now ?? DateTime(2026, 11, 10, 9),
         ),
       ),
@@ -67,12 +70,21 @@ void main() {
     expect(find.byKey(const Key('home.recentEmpty')), findsOneWidget);
   });
 
-  testWidgets('the actions explain they are not available yet',
+  testWidgets('Record deposit opens the payment flow', (tester) async {
+    await pumpHome(tester);
+
+    await tester.tap(find.byKey(const Key('home.recordDeposit')));
+    await tester.pump();
+
+    expect(recordTaps, 1);
+    expect(find.byType(SnackBar), findsNothing);
+  });
+
+  testWidgets('Withdrawal and Submit explain they are not available yet',
       (tester) async {
     await pumpHome(tester);
 
     for (final (key, words) in [
-      ('home.recordDeposit', 'Recording deposits'),
       ('home.withdrawal', 'Withdrawal requests'),
       ('home.submitDay', "Submitting the day's collections"),
     ]) {

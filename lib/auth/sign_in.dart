@@ -18,6 +18,8 @@ String signInErrorMessage(Object error) {
       // aren't collectors.
       ApiFailure.forbidden =>
         'This app is for collectors. Administrators and agents use the desktop app.',
+      ApiFailure.notFound || ApiFailure.conflict =>
+        error.message ?? 'Sign-in failed. Try again.',
       ApiFailure.network =>
         "Couldn't reach the server. Check your connection and try again.",
       ApiFailure.validation =>

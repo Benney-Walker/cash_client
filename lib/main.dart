@@ -1,9 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 
+import 'api/authenticated_client.dart';
+import 'app_services.dart';
 import 'auth/auth_api.dart';
 import 'auth/login_screen.dart';
 import 'auth/session_manager.dart';
 import 'auth/session_store.dart';
+import 'collector/collector_api.dart';
+import 'collector/member_cache.dart';
+import 'collector/member_directory.dart';
 import 'config/app_config.dart';
 import 'home/home_shell.dart';
 import 'settings/app_info.dart';
@@ -27,7 +33,23 @@ Future<void> main() async {
     store: SecureSessionStore(),
   )..restore();
 
-  runApp(CashClientApp(sessions: sessions, theme: theme, appInfo: appInfo));
+  // Every protected call goes through the authenticated client, which adds
+  // the collector's token and refreshes it when it expires.
+  final collectorApi = CollectorApi(
+    baseUrl: AppConfig.apiBaseUrl,
+    client: AuthenticatedClient(http.Client(), sessions),
+  );
+  final services = AppServices(
+    collectorApi: collectorApi,
+    members: MemberDirectory(api: collectorApi, cache: SqliteMemberCache()),
+  );
+
+  runApp(CashClientApp(
+    sessions: sessions,
+    theme: theme,
+    appInfo: appInfo,
+    services: services,
+  ));
 }
 
 class CashClientApp extends StatelessWidget {
@@ -36,11 +58,13 @@ class CashClientApp extends StatelessWidget {
     required this.sessions,
     required this.theme,
     required this.appInfo,
+    required this.services,
   });
 
   final SessionManager sessions;
   final ThemeController theme;
   final AppInfo appInfo;
+  final AppServices services;
 
   @override
   Widget build(BuildContext context) {
@@ -52,7 +76,12 @@ class CashClientApp extends StatelessWidget {
         theme: AppTheme.light,
         darkTheme: AppTheme.dark,
         themeMode: theme.mode,
-        home: AuthGate(sessions: sessions, theme: theme, appInfo: appInfo),
+        home: AuthGate(
+          sessions: sessions,
+          theme: theme,
+          appInfo: appInfo,
+          services: services,
+        ),
       ),
     );
   }
@@ -66,11 +95,13 @@ class AuthGate extends StatefulWidget {
     required this.sessions,
     required this.theme,
     required this.appInfo,
+    required this.services,
   });
 
   final SessionManager sessions;
   final ThemeController theme;
   final AppInfo appInfo;
+  final AppServices services;
 
   @override
   State<AuthGate> createState() => _AuthGateState();
@@ -99,13 +130,15 @@ class _AuthGateState extends State<AuthGate> {
   }
 
   void _onSessionChanged() {
+    if (widget.sessions.session != null || widget.sessions.isRestoring) return;
+    // The branch member list is personal data; it doesn't outlive the
+    // session it was downloaded in.
+    widget.services.members.clear();
     // This widget is the bottom screen, so swapping it to the login screen
-    // isn't enough when other screens (later, the deposit screens) are open
-    // on top. Close them, so a collector whose session ended can't
+    // isn't enough when other screens (such as the payment screens) are
+    // open on top. Close them, so a collector whose session ended can't
     // keep using a screen that's still showing.
-    if (widget.sessions.session == null && mounted) {
-      Navigator.of(context).popUntil((route) => route.isFirst);
-    }
+    if (mounted) Navigator.of(context).popUntil((route) => route.isFirst);
   }
 
   @override
@@ -127,6 +160,7 @@ class _AuthGateState extends State<AuthGate> {
           session: session,
           theme: widget.theme,
           appInfo: widget.appInfo,
+          services: widget.services,
           onSignOut: sessions.signOut,
         );
       },

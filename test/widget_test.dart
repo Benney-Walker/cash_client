@@ -1,3 +1,4 @@
+import 'package:cash_client/app_services.dart';
 import 'package:cash_client/auth/session_manager.dart';
 import 'package:cash_client/home/home_shell.dart';
 import 'package:cash_client/main.dart';
@@ -11,13 +12,18 @@ import 'support/fakes.dart';
 void main() {
   late SessionManager sessions;
   late ThemeController theme;
+  late MemoryMemberCache memberCache;
+  late AppServices services;
 
   Future<void> pumpApp(
     WidgetTester tester, {
     MemorySessionStore? store,
     FakeRefreshApi? backend,
     ThemeMode? savedTheme,
+    FakeCollectorBackend? collector,
   }) async {
+    memberCache = MemoryMemberCache();
+    services = testServices(backend: collector, cache: memberCache);
     sessions = SessionManager(
       api: (backend ?? FakeRefreshApi(FakeRefreshApi.issues('new.access.token'))).api,
       store: store ?? MemorySessionStore(),
@@ -25,7 +31,12 @@ void main() {
     theme = ThemeController(MemoryThemeModeStore(savedTheme));
     await theme.load();
     await tester.pumpWidget(
-      CashClientApp(sessions: sessions, theme: theme, appInfo: testAppInfo),
+      CashClientApp(
+        sessions: sessions,
+        theme: theme,
+        appInfo: testAppInfo,
+        services: services,
+      ),
     );
     await sessions.restore();
     await tester.pumpAndSettle();
@@ -183,6 +194,36 @@ void main() {
 
       expect(brightnessAt(tester, find.byKey(const Key('login.submit'))),
           Brightness.light);
+    });
+  });
+
+  group('record payment', () {
+    testWidgets('Record deposit opens the member picker with the branch list',
+        (tester) async {
+      await pumpApp(tester, store: MemorySessionStore(collectorSession));
+
+      await tester.tap(find.byKey(const Key('home.recordDeposit')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Choose member'), findsOneWidget);
+      expect(find.text('Ama Owusu'), findsOneWidget);
+      expect(find.text('Yaw Boateng'), findsOneWidget);
+      // The downloaded list is saved for offline use.
+      expect(memberCache.saved?.members, hasLength(2));
+    });
+
+    testWidgets('signing out clears the saved member list', (tester) async {
+      await pumpApp(tester, store: MemorySessionStore(collectorSession));
+      await tester.tap(find.byKey(const Key('home.recordDeposit')));
+      await tester.pumpAndSettle();
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+
+      await tapKey(tester, 'nav.settings');
+      await tapKey(tester, 'settings.signOut');
+
+      expect(memberCache.saved, isNull);
+      expect(memberCache.clears, greaterThan(0));
     });
   });
 }

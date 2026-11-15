@@ -11,15 +11,17 @@ import '../theme/app_gradients.dart';
 /// across the top with the greeting and today's total on a glass card,
 /// then the actions and recent records on the plain page.
 ///
-/// The backend endpoints for recording and listing collections don't exist
-/// yet, so the totals show an empty day and the actions explain that
-/// they're not available. The buttons stay enabled on purpose: a disabled
-/// button gives no reason, a message does.
+/// Record deposit opens the payment flow. Today's totals and the recent
+/// list aren't connected to the backend yet, so they show an empty day;
+/// Withdrawal and Submit explain that they're not available. Those buttons
+/// stay enabled on purpose: a disabled button gives no reason, a message
+/// does.
 class HomeScreen extends StatelessWidget {
   const HomeScreen({
     super.key,
     required this.staffName,
     required this.onSeeAll,
+    required this.onRecordDeposit,
     this.now = DateTime.now,
   });
 
@@ -28,6 +30,9 @@ class HomeScreen extends StatelessWidget {
 
   /// Opens the full history.
   final VoidCallback onSeeAll;
+
+  /// Opens the record-payment flow (savings deposit or share purchase).
+  final VoidCallback onRecordDeposit;
 
   /// For the greeting; replaceable in tests.
   final DateTime Function() now;
@@ -61,10 +66,7 @@ class HomeScreen extends StatelessWidget {
                         child: GradientButton(
                           key: const Key('home.recordDeposit'),
                           padding: _compactPadding,
-                          onPressed: () => _notAvailable(
-                            context,
-                            "Recording deposits isn't available yet.",
-                          ),
+                          onPressed: onRecordDeposit,
                           child: const _IconLabel(
                             icon: Icons.add,
                             label: 'Record deposit',
