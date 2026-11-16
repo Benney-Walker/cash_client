@@ -12,8 +12,9 @@ class AppDatabase {
   final String fileName;
   Future<Database>? _db;
 
-  /// Version 1: member list. Version 2: outbox.
-  static const version = 2;
+  /// Version 1: member list. Version 2: outbox. Version 3: locks shared
+  /// between the app and the background sync.
+  static const version = 3;
 
   Future<Database> get database => _db ??= _open();
 
@@ -26,9 +27,11 @@ class AppDatabase {
       onCreate: (db, version) async {
         await _createMemberTables(db);
         await _createOutbox(db);
+        await _createLocks(db);
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) await _createOutbox(db);
+        if (oldVersion < 3) await _createLocks(db);
       },
     );
   }
@@ -55,6 +58,17 @@ class AppDatabase {
       CREATE TABLE sync_meta (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
+      )''');
+  }
+
+  /// Named locks with a lease, such as the one that lets only one isolate
+  /// refresh the session at a time (`RefreshLock`).
+  static Future<void> _createLocks(Database db) async {
+    await db.execute('''
+      CREATE TABLE app_locks (
+        name TEXT PRIMARY KEY,
+        owner TEXT NOT NULL,
+        held_until TEXT NOT NULL
       )''');
   }
 

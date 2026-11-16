@@ -143,52 +143,69 @@ void main() {
     });
   });
 
-  group('AuthApi.refreshAccessToken', () {
+  group('AuthApi.refreshTokens', () {
     // A token in the backend's shape: three base64url parts.
     const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJTVEYwMDEifQ.c2lnbmF0dXJl';
+    final rotated =
+        jsonEncode({'authToken': jwt, 'refreshToken': 'next-refresh'});
 
-    test('posts the refresh token and returns the bare token body', () async {
+    test('posts the refresh token and returns both new tokens', () async {
       final requests = <http.Request>[];
-      final api = fakeAuthApi(200, jwt, requests: requests);
+      final api = fakeAuthApi(200, rotated, requests: requests);
 
-      final token = await api.refreshAccessToken('refresh-token');
+      final tokens = await api.refreshTokens('refresh-token');
 
-      expect(token, jwt);
+      expect(tokens.accessToken, jwt);
+      expect(tokens.refreshToken, 'next-refresh');
       expect(requests.single.url.toString(),
           '$testBaseUrl/api/auth/v1/refresh-collector-token');
       expect(jsonDecode(requests.single.body),
           {'refreshToken': 'refresh-token'});
     });
 
-    test('also accepts the token as a quoted JSON string', () async {
-      final api = fakeAuthApi(200, jsonEncode(jwt));
-      expect(await api.refreshAccessToken('r'), jwt);
+    test('401 (used, revoked or expired refresh token) is unauthorized', () {
+      final api = fakeAuthApi(401, errorBody(401, 'Invalid or expired refresh token'));
+      expect(api.refreshTokens('old'), failsWith(ApiFailure.unauthorized));
     });
 
-    test('ignores surrounding whitespace', () async {
-      final api = fakeAuthApi(200, '  $jwt\n');
-      expect(await api.refreshAccessToken('r'), jwt);
-    });
-
-    test('401 (expired refresh token or inactive staff) is unauthorized', () {
-      final api = fakeAuthApi(401, errorBody(401, 'Invalid refresh token'));
-      expect(api.refreshAccessToken('old'),
-          failsWith(ApiFailure.unauthorized));
-    });
-
-    test('a body that is not a token is an unexpected response', () {
+    test('a response without both tokens is unexpected', () {
       for (final body in [
         '',
         '<html>proxy page</html>',
+        // The old bare-token reply.
+        jwt,
+        jsonEncode(jwt),
         jsonEncode({'authToken': jwt}),
-        'not a token',
+        jsonEncode({'authToken': 'not a token', 'refreshToken': 'r'}),
+        jsonEncode({'authToken': jwt, 'refreshToken': ''}),
         jsonEncode(42),
       ]) {
         final api = fakeAuthApi(200, body);
-        expect(api.refreshAccessToken('x'),
+        expect(api.refreshTokens('x'),
             failsWith(ApiFailure.unexpectedResponse),
             reason: body);
       }
+    });
+  });
+
+  group('AuthApi.logout', () {
+    test('posts the refresh token and accepts 204', () async {
+      final requests = <http.Request>[];
+      final api = fakeAuthApi(204, '', requests: requests);
+
+      await api.logout('refresh-token');
+
+      expect(requests.single.url.toString(), '$testBaseUrl/api/auth/v1/logout');
+      expect(jsonDecode(requests.single.body),
+          {'refreshToken': 'refresh-token'});
+    });
+
+    test('no connection is a network failure', () {
+      final api = AuthApi(
+        baseUrl: testBaseUrl,
+        client: MockClient((_) async => throw http.ClientException('offline')),
+      );
+      expect(api.logout('r'), failsWith(ApiFailure.network));
     });
   });
 }

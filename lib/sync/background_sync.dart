@@ -3,6 +3,7 @@ import 'package:workmanager/workmanager.dart';
 
 import '../api/authenticated_client.dart';
 import '../auth/auth_api.dart';
+import '../auth/refresh_lock.dart';
 import '../auth/session_manager.dart';
 import '../auth/session_store.dart';
 import '../collector/collector_api.dart';
@@ -40,9 +41,12 @@ Future<void> runBackgroundSync() async {
     return;
   }
 
+  final database = AppDatabase();
   final sessions = SessionManager(
     api: AuthApi(baseUrl: AppConfig.apiBaseUrl),
     store: SecureSessionStore(),
+    // The open app may be refreshing too; refresh tokens are single use.
+    refreshLock: SqliteRefreshLock(database),
   );
   await sessions.restore();
   // Nobody signed in: the outbox waits for the collector's next sign-in.
@@ -51,7 +55,7 @@ Future<void> runBackgroundSync() async {
   final client = http.Client();
   try {
     final sync = PaymentSync(
-      store: SqliteOutboxStore(AppDatabase()),
+      store: SqliteOutboxStore(database),
       api: CollectorApi(
         baseUrl: AppConfig.apiBaseUrl,
         client: AuthenticatedClient(client, sessions),

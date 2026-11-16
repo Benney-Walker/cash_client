@@ -14,6 +14,7 @@ import 'package:cash_client/outbox/outbox.dart';
 import 'package:cash_client/outbox/outbox_store.dart';
 import 'package:cash_client/settings/app_info.dart';
 import 'package:cash_client/settings/theme_mode_store.dart';
+import 'package:cash_client/submission/day_closure.dart';
 import 'package:cash_client/sync/payment_sync.dart';
 import 'package:cash_client/sync/sync_platform.dart';
 import 'package:cash_client/sync/sync_scheduler.dart';
@@ -108,11 +109,24 @@ class FakeRefreshApi {
   /// When true, the refresh call fails as if the phone had no connection.
   bool offline = false;
 
+  /// Refresh tokens the app sent, in order.
+  final sentRefreshTokens = <String>[];
+
+  /// Refresh tokens the app sent to `logout`.
+  final loggedOut = <String>[];
+
   late final AuthApi api = AuthApi(
     baseUrl: testBaseUrl,
     client: MockClient((request) async {
+      if (request.url.path.endsWith('/logout')) {
+        loggedOut.add(
+            (jsonDecode(request.body) as Map)['refreshToken'] as String);
+        return http.Response('', 204);
+      }
       if (request.url.path.endsWith('/refresh-collector-token')) {
         calls++;
+        sentRefreshTokens.add(
+            (jsonDecode(request.body) as Map)['refreshToken'] as String);
         if (delay > Duration.zero) await Future<void>.delayed(delay);
         if (offline) throw http.ClientException('no connection');
         final (status, body) = refresh;
@@ -122,8 +136,13 @@ class FakeRefreshApi {
     }),
   );
 
-  /// The backend sends the new access token as the bare response body.
-  static (int, String) issues(String token) => (200, token);
+  /// Refresh tokens rotate: the backend sends a new access token and a new
+  /// refresh token (15 Nov 2026).
+  static (int, String) issues(
+    String token, {
+    String refreshToken = 'next-refresh-token',
+  }) =>
+      (200, jsonEncode({'authToken': token, 'refreshToken': refreshToken}));
 
   static (int, String) refuses() =>
       (401, errorBody(401, 'Invalid refresh token'));
@@ -219,6 +238,67 @@ String paymentBody({
       'postedAt': null,
     });
 
+/// A day summary from `GET /api/collector/v1/payments`. [payments] are
+/// decoded payment bodies; [correctableUntil] overrides each one's window.
+String daySummaryBody({
+  num savingsTotal = 1040.0,
+  num sharesTotal = 200.0,
+  int count = 18,
+  List<String> correctableUntil = const [],
+}) =>
+    jsonEncode({
+      'date': '2026-11-15',
+      'count': count,
+      'savingsTotal': savingsTotal,
+      'sharesTotal': sharesTotal,
+      'total': savingsTotal + sharesTotal,
+      'payments': [
+        for (final (i, until) in correctableUntil.indexed)
+          {
+            ...jsonDecode(paymentBody(idempotencyKey: 'day-$i')) as Map,
+            'correctableUntil': until,
+          },
+      ],
+    });
+
+/// A submission from `/api/collector/v1/submissions`.
+Map<String, Object?> submissionJson({
+  String status = 'SUBMITTED',
+  num expectedAmount = 1240.0,
+  int paymentCount = 18,
+  int failedCount = 0,
+}) =>
+    {
+      'submissionId': '9a1c1a2e-0000-4000-8000-000000000009',
+      'collectorStaffId': 'STF001',
+      'collectorName': 'Kofi Mensah',
+      'branchName': 'Tarkwa',
+      'status': status,
+      'submittedAt': '2026-11-15T17:42:00',
+      'paymentCount': paymentCount,
+      'expectedAmount': expectedAmount,
+      'failedCount': failedCount,
+      'failedAmount': 0.0,
+      'countedAmount': null,
+      'shortageAmount': null,
+      'overageAmount': null,
+      'approvedByStaffId': null,
+      'approvedAt': null,
+      'payments': null,
+    };
+
+/// A page of submissions, newest first, as Spring's PagedModel sends it.
+String submissionsPage([List<Map<String, Object?>> content = const []]) =>
+    jsonEncode({
+      'content': content,
+      'page': {
+        'size': 1,
+        'number': 0,
+        'totalElements': content.length,
+        'totalPages': content.isEmpty ? 0 : 1,
+      },
+    });
+
 /// A scripted collector backend. [handler] answers each request; [requests]
 /// collects what the app sent.
 class FakeCollectorBackend {
@@ -253,12 +333,32 @@ class FakeCollectorBackend {
             200,
           );
         }
+        if (request.method == 'GET' &&
+            request.url.path.endsWith('/collector/v1/payments')) {
+          return http.Response(daySummaryBody(), 200);
+        }
+        if (request.url.path.endsWith('/collector/v1/submissions')) {
+          return request.method == 'POST'
+              ? http.Response(jsonEncode(submissionJson()), 200)
+              : http.Response(submissionsPage(), 200);
+        }
         return http.Response(errorBody(404, 'Not found'), 404);
       });
 
+  /// Payments sent (`POST /api/collector/v1/payments`).
   List<http.Request> get paymentRequests => [
         for (final r in requests)
-          if (r.method == 'POST') r,
+          if (r.method == 'POST' &&
+              r.url.path.endsWith('/collector/v1/payments'))
+            r,
+      ];
+
+  /// Submissions sent (`POST /api/collector/v1/submissions`).
+  List<http.Request> get submitRequests => [
+        for (final r in requests)
+          if (r.method == 'POST' &&
+              r.url.path.endsWith('/collector/v1/submissions'))
+            r,
       ];
 }
 
@@ -380,6 +480,23 @@ OutboxPayment queuedPayment({
       refusedAt: refusalReason == null ? null : recordedAt.toUtc(),
     );
 
+class MemorySubmittedDayStore implements SubmittedDayStore {
+  SubmittedDay? day;
+
+  @override
+  Future<SubmittedDay?> read() async => day;
+
+  @override
+  Future<void> save(SubmittedDay day) async {
+    this.day = day;
+  }
+
+  @override
+  Future<void> clear() async {
+    day = null;
+  }
+}
+
 /// Records the refused-payment notifications and permission requests.
 class FakeNotifications implements AppNotifications {
   final shown = <List<OutboxPayment>>[];
@@ -429,6 +546,7 @@ AppServices testServices({
   FakeBackgroundScheduler? background,
   String? Function()? staffId,
   DateTime Function()? now,
+  MemorySubmittedDayStore? dayStore,
 }) {
   final collector = backend ?? FakeCollectorBackend.working();
   final store = outboxStore ?? MemoryOutboxStore();
@@ -455,6 +573,10 @@ AppServices testServices({
       connectivity: connectivity ?? FakeConnectivity(),
       background: background ?? FakeBackgroundScheduler(),
       notifications: notify,
+    ),
+    dayClosure: DayClosure(
+      store: dayStore ?? MemorySubmittedDayStore(),
+      staffId: who,
     ),
   );
 }

@@ -240,7 +240,9 @@ class _LoginScreenState extends State<LoginScreen> {
             ] else if (widget.sessions.sessionEndedByServer) ...[
               const SizedBox(height: 16),
               const _Banner.notice(
-                message: 'Your session has ended. Sign in again to continue.',
+                message: 'Your session has ended. Sign in again to continue. '
+                    "If today's collections were approved, you can sign in "
+                    'again tomorrow.',
               ),
             ],
             const SizedBox(height: 20),

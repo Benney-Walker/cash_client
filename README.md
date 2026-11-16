@@ -21,14 +21,15 @@ The app is a client of the `bankingbackend` Spring Boot API. It holds no busines
 | Withdrawal requests | Removed (owner decision, 15 Nov 2026). Members withdraw at a branch office |
 | Location tracking | Not started. Needs backend support |
 | Transaction history | Screen in place, empty. Backend day summary in PR #14 |
-| Daily cash submission and session ending | Not started. Needs backend support |
+| Daily cash submission and session ending | Done (backend PR #14, decision D35). No rejection step: the approver records the cash counted |
 
 ## Requirements
 
 - Flutter SDK with Dart `^3.12.0` (see `pubspec.yaml`)
 - Android SDK for device builds. Android package: `com.bynexlabs.cash_client`. Minimum Android 7.0 (API 24), required by `shared_preferences` (`flutter_secure_storage` needs 6.0)
+- The database (`cash_client.db`) is at version 3: member list (1), outbox (2), shared locks (3)
 - Android builds use core library desugaring (`android/app/build.gradle.kts`), which `flutter_local_notifications` needs
-- A running `bankingbackend`. Recording payments needs the collector endpoints from backend PR #14, merged with master from 14 Nov 2026 or later (the JWT filter fix for loading staff roles)
+- A running `bankingbackend` with backend PR #14 at `df9f555` or later (15 Nov 2026): collector payments, rotating refresh tokens, logout and the daily submission. Earlier backends answer refresh with a bare token, which this app no longer reads
 
 ## Run and test
 
@@ -52,10 +53,10 @@ The screen is design option 2, "glass card": the pale gradient wash fills the sc
 On the glass card all text uses the panel's main text colour, and in dark mode field error messages do too. The lighter secondary tone and the error reds fall below 4.5:1 on dark-mode glass where it crosses the teal glow; the field's red border still marks an error. Field labels stay inside the fields rather than floating up onto the glass.
 
 - Calls `POST /api/auth/v1/collector-login` with `staffId` and `password` (collectors have their own sign-in endpoint since 14 Nov 2026; the desktop app uses `staff-login`, which refuses collectors). The backend returns `staffName`, `roles`, `authToken` and `refreshToken`. A wrong ID or password, or an inactive account, returns 401; a valid account that isn't a collector returns 403.
-- A 403, or a response without the `COLLECTOR` role, shows a message pointing the person to the desktop app, and any tokens are discarded, not stored. The backend still enforces permissions on every endpoint.
+- A 403 shows the backend's own message: "Only collector accounts can sign in here", or, once the collector's day has been approved, "…You can sign in again tomorrow" (backend, 15 Nov 2026). A response without the `COLLECTOR` role points the person to the desktop app. Either way any tokens are discarded, not stored. The backend still enforces permissions on every endpoint.
 - The session (tokens, staff ID, name, roles) is stored with `flutter_secure_storage`, backed by the Android Keystore. The password is never stored. App backup is turned off so tokens never leave the phone.
 - On launch, a stored session skips sign-in, so a collector stays signed in until they sign out or the backend ends the session.
-- Signing out only forgets the tokens on the phone; the backend has no logout endpoint yet. The tokens stay valid until they expire. Their lifetimes are set by the backend's `JWT_ACCESS_EXPIRATION` and `JWT_REFRESH_EXPIRATION`.
+- Signing out forgets the tokens on the phone at once, then calls `POST /api/auth/v1/logout` with the refresh token, so the backend ends the session and its tokens stop working (always 204). If that call can't get through, the session on the server runs out when its refresh token expires. Token lifetimes are set by the backend's `JWT_ACCESS_EXPIRATION` and `JWT_REFRESH_EXPIRATION`.
 
 - Password reset: the backend has a three-step reset (`/api/auth/v1/password-reset/request-code`, `confirm-code`, `new-password`), but it isn't in the collector app for now (owner decision, 13 Nov 2026).
 
@@ -66,9 +67,12 @@ Code: `lib/auth/` (`auth_api.dart`, `session_manager.dart`, `session_store.dart`
 Calls to protected endpoints go through `AuthenticatedClient` (`lib/api/authenticated_client.dart`). Future features use it instead of a plain `http.Client`.
 
 - It adds `Authorization: Bearer <access token>` to every request.
-- On a 401 it calls `POST /api/auth/v1/refresh-collector-token` with `{"refreshToken": …}`, saves the new access token and replays the request once, body included. That endpoint accepts only collector refresh tokens. Requests that hit a 401 at the same moment share one refresh call.
-- The refresh endpoint answers with the new access token as the bare response body, not a JSON object (backend contract checked 14 Nov 2026 on `bankingbackend` master). A token in quotes is also accepted. The body must have the shape of the backend's signed JWTs (three dot-separated parts); anything else, such as a proxy error page, is treated as an unexpected response rather than saved as a token.
-- The backend doesn't issue a new refresh token, so when the refresh token expires (or the collector is deactivated) the refresh gets a 401. The session then ends: the tokens are cleared and the app returns to sign-in with "Your session has ended." The same path will handle the backend ending the session after the day's submission is approved.
+- On a 401 it calls `POST /api/auth/v1/refresh-collector-token` with `{"refreshToken": …}`, saves both new tokens and replays the request once, body included. That endpoint accepts only collector refresh tokens. Requests that hit a 401 at the same moment share one refresh call.
+- Refresh tokens rotate (backend PR #14, 15 Nov 2026): the response is `{ "authToken", "refreshToken" }` and the refresh token sent is used up. The access token must have the shape of the backend's signed JWTs (three dot-separated parts) and the refresh token must be present; anything else, such as a proxy error page, is an unexpected response and nothing is saved.
+- Spending a used refresh token again ends the whole session on the backend, so the app is careful never to:
+  - The open app and the background sync each have a session manager, in separate isolates. Only one refreshes at a time, through a lock row (`app_locks`) in the app's SQLite database with a 40-second lease (`lib/auth/refresh_lock.dart`). Each first re-reads the stored session: if the other already refreshed, it takes those tokens instead of refreshing; if the other found the session ended, it ends here too.
+  - A refresh that doesn't get through is retried once, straight away, with the same token. The backend accepts that token again for 30 seconds after a refresh whose response was lost, and refresh requests time out after 10 seconds so the retry lands inside that grace.
+- When the refresh gets a 401 (refresh token expired, revoked or reused, collector deactivated, or the day's submission approved), the session ends: the tokens are cleared and the app returns to sign-in with "Your session has ended. … If today's collections were approved, you can sign in again tomorrow."
 - If the refresh can't reach the server, the session is kept, so a collector isn't signed out for being offline.
 - A 403 is passed straight through. It means the role isn't allowed, and a new token wouldn't change that.
 - Multipart and streamed requests can't be replayed: on a 401 they still trigger a refresh, but the caller gets the 401 and has to retry.
@@ -85,7 +89,7 @@ Home (`lib/home/home_screen.dart`) keeps design A's layout, restyled as design H
 - On the plain page below: **Record deposit** (the screen's one gradient button) full width, with **Submit today's collections** beneath it. Design A had a **Withdrawal** button beside Record deposit; it was removed with collector withdrawal requests (owner decision, 15 Nov 2026).
 - **Recent** records, with **See all** opening the History tab.
 
-**Record deposit** opens the payment flow (below). Today's total and the recent list aren't connected yet: they show GH₵ 0.00 and "No collections recorded today". Submit stays enabled and shows a short message saying the feature isn't available yet, rather than being greyed out with no reason.
+**Record deposit** opens the payment flow (below), and **Submit today's collections** the Submit today screen (see Submitting the day). Once the day is submitted, Record deposit says no more payments can be recorded until it's approved, with a View link back to the submission. Today's total and the recent list on home aren't connected yet: they show GH₵ 0.00 and "No collections recorded today".
 
 History (`lib/home/history_screen.dart`), design Y1, "wash header" (12 Nov 2026):
 
@@ -120,6 +124,19 @@ Member list on the phone (`member_cache.dart`, `member_directory.dart`):
 
 Not in this step: corrections within the 10 minutes, and connecting home's totals and the History tab to the backend.
 
+## Submitting the day
+
+Design D1, "Submit screen" (16 Nov 2026), in `lib/submission/`, against backend PR #14 (decision D35, 15 Nov 2026).
+
+- **Before submitting** (`submit_day_screen.dart`): the screen first sends whatever is ready in the outbox, then loads today's totals (`GET /api/collector/v1/payments`: count, savings, shares, total) and the latest submission. It shows the total and count on a glass card, savings and shares below, and two checks:
+  - **The outbox.** Nothing waiting on the phone ✓, or payments still on the phone (they go after their 10 minutes once online), or refused payments: "call your admin", which opens the Outbox.
+  - **The 10-minute windows.** No payments in their 10 minutes ✓, or a countdown to when the last one closes.
+- **Submit is blocked** while either check isn't clear. Tapping it says why instead of sending. Refused payments block it until the admin sorts them out (owner decision, 16 Nov 2026), because the backend doesn't know about them and the submission's expected cash would leave them out.
+- **Submitting** asks for confirmation ("You'll hand in GH₵ … No more payments can be recorded until it's approved, and approval signs you out until tomorrow"), then sends `POST /api/collector/v1/submissions`. The backend's refusals are shown word for word, for example "…You can submit after 17:50". Sending it again while waiting returns the same submission, so a retry after a lost response is safe.
+- **Waiting for approval**: the same screen shows a "Waiting for approval" chip, the cash to hand in (the backend's `expectedAmount`), when it was submitted, the payment count, and any failed payments counted separately. It checks the latest submission every 30 seconds.
+- **Approval** (by the branch's agent or an administrator, with the cash counted; there's no rejection) ends all the collector's sessions at once. The next request gets a 401, the refresh is refused, and the app returns to sign-in. Signing in is refused (403) for the rest of the day, with the backend's message.
+- **The day closed on the phone** (`day_closure.dart`): the app keeps a note in `sync_meta` while a submission waits, so Record deposit can explain the day is closed instead of taking a payment offline that the server would refuse. The note is updated from the backend at sign-in and on the submit screen, and cleared when the session ends.
+
 ## Offline payments
 
 Owner decisions of 7 and 15 Nov 2026, built in `lib/outbox/` and `lib/sync/`.
@@ -144,6 +161,7 @@ When it syncs (`sync_scheduler.dart`, `background_sync.dart`):
 - While the app is open: at sign-in and launch, when the app returns to the foreground, when the phone gets a connection (`connectivity_plus`), when a waiting payment's 10 minutes are up, and when the collector taps **Try again now** in the Outbox.
 - While the app is closed: Android's WorkManager (`workmanager`) runs a sync about every 15 minutes whenever there's a connection, plus one when each payment's 10 minutes are up. Android may run these a little late, so a closed app can send a payment some minutes after its 10 minutes.
 - Only the signed-in collector's payments are sent. Signing out, or the session ending, keeps them on the phone; they go after the same collector signs in again (owner decision, 15 Nov 2026). Sign out warns when payments haven't been sent.
+- A payment saved on the phone after the day was submitted is refused by the backend (409) until the next day, so the app stops Record deposit while a submission waits (see Submitting the day).
 
 The Outbox (`outbox_screen.dart`), design R2 (15 Nov 2026):
 

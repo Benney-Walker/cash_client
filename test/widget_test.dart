@@ -312,4 +312,47 @@ void main() {
       expect(find.byKey(const Key('outbox.title')), findsOneWidget);
     });
   });
+
+  group('daily submission', () {
+    testWidgets("Submit today's collections opens the submit screen",
+        (tester) async {
+      await pumpApp(tester, store: MemorySessionStore(collectorSession));
+
+      await tapKey(tester, 'home.submitDay');
+
+      expect(find.byKey(const Key('submit.title')), findsOneWidget);
+      expect(find.text('GH₵ 1,240.00'), findsOneWidget);
+    });
+
+    testWidgets('after submitting, Record deposit explains the day is closed',
+        (tester) async {
+      await pumpApp(tester, store: MemorySessionStore(collectorSession));
+
+      await tapKey(tester, 'home.submitDay');
+      await tapKey(tester, 'submit.button');
+      await tapKey(tester, 'submit.confirm');
+      expect(find.byKey(const Key('submit.waiting')), findsOneWidget);
+
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      await tapKey(tester, 'home.recordDeposit');
+
+      expect(find.textContaining("You've submitted today's collections"),
+          findsOneWidget);
+      expect(find.byKey(const Key('picker.search')), findsNothing);
+    });
+
+    testWidgets('signing out reopens the day on this phone', (tester) async {
+      await pumpApp(tester, store: MemorySessionStore(collectorSession));
+      await tapKey(tester, 'home.submitDay');
+      await tapKey(tester, 'submit.button');
+      await tapKey(tester, 'submit.confirm');
+      expect(services.dayClosure.isClosed, isTrue);
+
+      await sessions.signOut();
+      await tester.pumpAndSettle();
+
+      expect(services.dayClosure.isClosed, isFalse);
+    });
+  });
 }

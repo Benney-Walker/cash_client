@@ -88,6 +88,56 @@ class CollectorApi {
     return payment;
   }
 
+  /// `GET /api/collector/v1/payments`: today's payments with totals.
+  Future<CollectorDaySummary> fetchDaySummary() async {
+    final response = await _send(
+      () => _client.get(
+        apiUri(_baseUrl, '/api/collector/v1/payments'),
+        headers: const {'Accept': 'application/json'},
+      ),
+    );
+    return CollectorDaySummary.fromJson(_decode(response.body)) ??
+        (throw _unexpected());
+  }
+
+  /// `POST /api/collector/v1/submissions`: closes the day (decision D35).
+  ///
+  /// Covers every payment not yet handed in; no more payments can be
+  /// recorded until it's approved. Refused with 409 while a payment is in
+  /// its 10-minute window (the message says when the collector can submit).
+  /// Sending it again while waiting returns the same submission, so a retry
+  /// after a lost response is safe.
+  Future<DaySubmission> submitDay() async {
+    final response = await _send(
+      () => _client.post(
+        apiUri(_baseUrl, '/api/collector/v1/submissions'),
+        headers: const {'Accept': 'application/json'},
+      ),
+    );
+    return DaySubmission.fromJson(_decode(response.body)) ??
+        (throw _unexpected());
+  }
+
+  /// `GET /api/collector/v1/submissions?page=0&size=1`: the collector's
+  /// latest submission, or null if they've never submitted.
+  Future<DaySubmission?> fetchLatestSubmission() async {
+    final response = await _send(
+      () => _client.get(
+        apiUri(
+          _baseUrl,
+          '/api/collector/v1/submissions',
+          const {'page': '0', 'size': '1'},
+        ),
+        headers: const {'Accept': 'application/json'},
+      ),
+    );
+    final json = _decode(response.body);
+    final content = json is Map<String, dynamic> ? json['content'] : null;
+    if (content is! List) throw _unexpected();
+    if (content.isEmpty) return null;
+    return DaySubmission.fromJson(content.first) ?? (throw _unexpected());
+  }
+
   /// Runs a request and turns transport problems and non-200 answers into
   /// [ApiException]s. `AuthenticatedClient` throws its own [ApiException]
   /// when the session has ended; that passes straight through.

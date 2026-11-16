@@ -6,6 +6,7 @@ import 'api/authenticated_client.dart';
 import 'app_services.dart';
 import 'auth/auth_api.dart';
 import 'auth/login_screen.dart';
+import 'auth/refresh_lock.dart';
 import 'auth/session_manager.dart';
 import 'auth/session_store.dart';
 import 'collector/collector_api.dart';
@@ -19,6 +20,7 @@ import 'settings/app_info.dart';
 import 'settings/theme_controller.dart';
 import 'settings/theme_mode_store.dart';
 import 'storage/app_database.dart';
+import 'submission/day_closure.dart';
 import 'sync/background_sync.dart';
 import 'sync/payment_sync.dart';
 import 'sync/sync_platform.dart';
@@ -36,9 +38,12 @@ Future<void> main() async {
   await theme.load();
   final appInfo = await AppInfo.load();
 
+  final database = AppDatabase();
   final sessions = SessionManager(
     api: AuthApi(baseUrl: AppConfig.apiBaseUrl),
     store: SecureSessionStore(),
+    // Shared with the background sync, so only one refreshes at a time.
+    refreshLock: SqliteRefreshLock(database),
   )..restore();
 
   // Every protected call goes through the authenticated client, which adds
@@ -47,7 +52,6 @@ Future<void> main() async {
     baseUrl: AppConfig.apiBaseUrl,
     client: AuthenticatedClient(http.Client(), sessions),
   );
-  final database = AppDatabase();
   String? staffId() => sessions.session?.staffId;
   final outboxStore = SqliteOutboxStore(database);
   final outbox = Outbox(store: outboxStore, staffId: staffId);
@@ -75,6 +79,10 @@ Future<void> main() async {
       background: const WorkmanagerScheduler(),
       notifications: notifications,
     ),
+    dayClosure: DayClosure(
+      store: SqliteSubmittedDayStore(database),
+      staffId: staffId,
+    )..load(),
     openOutboxRequest: openOutbox,
   );
 
@@ -179,6 +187,7 @@ class _AuthGateState extends State<AuthGate> {
     // In case the session was restored before this widget existed.
     if (!widget.sessions.isRestoring && widget.sessions.session != null) {
       widget.services.sync.start();
+      widget.services.dayClosure.refresh(widget.services.collectorApi);
     }
   }
 
@@ -203,14 +212,17 @@ class _AuthGateState extends State<AuthGate> {
     if (widget.sessions.isRestoring) return;
     if (widget.sessions.session != null) {
       // Signed in: send anything waiting in the outbox, now and whenever a
-      // chance comes up.
+      // chance comes up, and check whether today is already submitted.
       services.sync.start();
+      services.dayClosure.refresh(services.collectorApi);
       return;
     }
     // Signed out or ended by the backend. The outbox stays on the phone for
     // the collector's next sign-in (owner decision 2026-11-15), but nothing
     // is sent without a session.
     services.sync.stop();
+    // Approval of the day's submission is what usually ends the session.
+    services.dayClosure.clear();
     // The branch member list is personal data; it doesn't outlive the
     // session it was downloaded in.
     services.members.clear();

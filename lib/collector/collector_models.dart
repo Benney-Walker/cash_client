@@ -187,6 +187,143 @@ class CollectorPayment {
     );
   }
 
-  static DateTime? _time(Object? value) =>
-      value is String ? DateTime.tryParse(value) : null;
+  static DateTime? _time(Object? value) => parseServerTime(value);
+}
+
+/// A backend `LocalDateTime` such as `2026-11-15T10:10:00`, as a UTC
+/// [DateTime]. The backend's clock is Africa/Accra time, which is UTC all
+/// year, so a time without a zone is read as UTC.
+DateTime? parseServerTime(Object? value) {
+  if (value is! String || value.isEmpty) return null;
+  final hasZone = RegExp(r'(Z|[+-]\d{2}:?\d{2})$').hasMatch(value);
+  return DateTime.tryParse(hasZone ? value : '${value}Z')?.toUtc();
+}
+
+/// The collector's payments for a day with totals, from
+/// `GET /api/collector/v1/payments` (backend PR #14). Totals leave out
+/// FAILED payments; PENDING ones count, as the cash has been collected.
+@immutable
+class CollectorDaySummary {
+  const CollectorDaySummary({
+    required this.count,
+    required this.savingsTotal,
+    required this.sharesTotal,
+    required this.total,
+    required this.payments,
+  });
+
+  final int count;
+  final Cedis savingsTotal;
+  final Cedis sharesTotal;
+  final Cedis total;
+
+  /// Newest first.
+  final List<CollectorPayment> payments;
+
+  /// Payments still inside their 10-minute correction window at [now].
+  /// The backend refuses a submission until there are none.
+  List<CollectorPayment> inWindow(DateTime now) => [
+        for (final p in payments)
+          if (p.status == PaymentStatus.pending &&
+              p.correctableUntil != null &&
+              p.correctableUntil!.isAfter(now))
+            p,
+      ];
+
+  static CollectorDaySummary? fromJson(Object? json) {
+    if (json is! Map<String, dynamic>) return null;
+    final count = json['count'];
+    final savings = Cedis.fromJson(json['savingsTotal']);
+    final shares = Cedis.fromJson(json['sharesTotal']);
+    final total = Cedis.fromJson(json['total']);
+    final rawPayments = json['payments'];
+    if (count is! int ||
+        savings == null ||
+        shares == null ||
+        total == null ||
+        rawPayments is! List) {
+      return null;
+    }
+    final payments = <CollectorPayment>[];
+    for (final entry in rawPayments) {
+      final payment = CollectorPayment.fromJson(entry);
+      if (payment == null) return null;
+      payments.add(payment);
+    }
+    return CollectorDaySummary(
+      count: count,
+      savingsTotal: savings,
+      sharesTotal: shares,
+      total: total,
+      payments: List.unmodifiable(payments),
+    );
+  }
+}
+
+/// The backend's `CollectorSubmissionStatus`. There's no rejection: the
+/// approver records the cash counted (owner decision D35, 2026-11-15).
+enum SubmissionStatus {
+  submitted,
+  approved,
+  unknown;
+
+  static SubmissionStatus fromWire(Object? value) => switch (value) {
+        'SUBMITTED' => submitted,
+        'APPROVED' => approved,
+        _ => unknown,
+      };
+}
+
+/// A daily submission, from `/api/collector/v1/submissions`.
+@immutable
+class DaySubmission {
+  const DaySubmission({
+    required this.id,
+    required this.status,
+    required this.paymentCount,
+    required this.expectedAmount,
+    required this.failedCount,
+    required this.failedAmount,
+    this.submittedAt,
+  });
+
+  final String id;
+  final SubmissionStatus status;
+
+  /// When the collector submitted, in UTC.
+  final DateTime? submittedAt;
+
+  /// Completed payments, whose total is the cash to hand in.
+  final int paymentCount;
+  final Cedis expectedAmount;
+
+  /// Failed payments, counted separately for the approver.
+  final int failedCount;
+  final Cedis failedAmount;
+
+  bool get isWaiting => status == SubmissionStatus.submitted;
+
+  static DaySubmission? fromJson(Object? json) {
+    if (json is! Map<String, dynamic>) return null;
+    final id = json['submissionId'];
+    final paymentCount = json['paymentCount'];
+    final expected = Cedis.fromJson(json['expectedAmount']);
+    final failedCount = json['failedCount'];
+    final failedAmount = Cedis.fromJson(json['failedAmount']) ?? Cedis.zero;
+    if (id is! String ||
+        paymentCount is! int ||
+        expected == null ||
+        failedCount is! int) {
+      return null;
+    }
+    return DaySubmission(
+      id: id,
+      status: SubmissionStatus.fromWire(json['status']),
+      submittedAt: parseServerTime(json['submittedAt']),
+      paymentCount: paymentCount,
+      expectedAmount: expected,
+      failedCount: failedCount,
+      failedAmount: failedAmount,
+    );
+  }
 }

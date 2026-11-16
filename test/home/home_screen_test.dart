@@ -11,6 +11,7 @@ void main() {
   late int seeAllTaps;
   late int recordTaps;
   late int outboxTaps;
+  late int submitTaps;
 
   Future<void> pumpHome(
     WidgetTester tester, {
@@ -22,6 +23,7 @@ void main() {
     seeAllTaps = 0;
     recordTaps = 0;
     outboxTaps = 0;
+    submitTaps = 0;
     await tester.pumpWidget(
       MaterialApp(
         theme: theme ?? AppTheme.light,
@@ -29,6 +31,7 @@ void main() {
           staffName: 'KOFI MENSAH',
           onSeeAll: () => seeAllTaps++,
           onRecordDeposit: () => recordTaps++,
+          onSubmitDay: () => submitTaps++,
           outboxWaiting: outboxWaiting,
           outboxRefused: outboxRefused,
           onOpenOutbox: () => outboxTaps++,
@@ -87,15 +90,15 @@ void main() {
     expect(find.byType(SnackBar), findsNothing);
   });
 
-  testWidgets('Submit explains it is not available yet', (tester) async {
+  testWidgets("Submit today's collections opens the submit screen",
+      (tester) async {
     await pumpHome(tester);
 
     final button = find.byKey(const Key('home.submitDay'));
     await tester.ensureVisible(button);
     await tester.tap(button);
     await tester.pump();
-    expect(find.textContaining("Submitting the day's collections"),
-        findsOneWidget);
+    expect(submitTaps, 1);
   });
 
   testWidgets('there is no withdrawal button', (tester) async {

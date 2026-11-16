@@ -1,8 +1,11 @@
 import 'package:cash_client/api/api_exception.dart';
+import 'package:cash_client/auth/auth_api.dart';
 import 'package:cash_client/auth/auth_session.dart';
 import 'package:cash_client/auth/session_manager.dart';
 import 'package:cash_client/auth/sign_in.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 
 import '../support/fakes.dart';
 
@@ -93,17 +96,38 @@ void main() {
     });
   });
 
-  test('signing out clears the session without the "ended" flag', () async {
+  test('signing out clears the session without the "ended" flag and tells '
+      'the backend', () async {
     final store = MemorySessionStore(collectorSession);
-    final sessions =
-        SessionManager(api: fakeAuthApi(200, loginBody()), store: store);
+    final backend = FakeRefreshApi(FakeRefreshApi.issues('unused.access.token'));
+    final sessions = SessionManager(api: backend.api, store: store);
     await sessions.restore();
 
     await sessions.signOut();
+    await Future<void>.delayed(Duration.zero);
 
     expect(sessions.session, isNull);
     expect(store.session, isNull);
     expect(sessions.sessionEndedByServer, isFalse);
+    expect(backend.loggedOut, ['refresh-token']);
+  });
+
+  test('signing out offline still signs out on the phone', () async {
+    final store = MemorySessionStore(collectorSession);
+    final sessions = SessionManager(
+      api: AuthApi(
+        baseUrl: testBaseUrl,
+        client: MockClient((_) async => throw http.ClientException('offline')),
+      ),
+      store: store,
+    );
+    await sessions.restore();
+
+    await sessions.signOut();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(sessions.session, isNull);
+    expect(store.session, isNull);
   });
 
   group('refreshAccessToken', () {
@@ -116,7 +140,7 @@ void main() {
       return (sessions, store);
     }
 
-    test('saves and returns the new access token', () async {
+    test('saves both new tokens: refresh tokens rotate', () async {
       final backend = FakeRefreshApi(FakeRefreshApi.issues('new.access.token'));
       final (sessions, store) = await signedIn(backend);
 
@@ -125,7 +149,63 @@ void main() {
       expect(token, 'new.access.token');
       expect(sessions.session?.accessToken, 'new.access.token');
       expect(store.session?.accessToken, 'new.access.token');
-      // The refresh token is kept: the backend doesn't issue a new one.
+      expect(store.session?.refreshToken, 'next-refresh-token');
+    });
+
+    test('the next refresh sends the new refresh token, never the used one',
+        () async {
+      final backend = FakeRefreshApi(
+          FakeRefreshApi.issues('first.access.token', refreshToken: 'second'));
+      final (sessions, _) = await signedIn(backend);
+
+      await sessions.refreshAccessToken();
+      backend.refresh =
+          FakeRefreshApi.issues('second.access.token', refreshToken: 'third');
+      await sessions.refreshAccessToken();
+
+      expect(backend.sentRefreshTokens, ['refresh-token', 'second']);
+    });
+
+    test('takes the tokens the background sync already refreshed instead of '
+        'spending the old refresh token', () async {
+      final backend = FakeRefreshApi(FakeRefreshApi.issues('unused.access.token'));
+      final (sessions, store) = await signedIn(backend);
+      // The background sync refreshed and saved while the app was open.
+      store.session = collectorSession.withTokens(
+        accessToken: 'background.access.token',
+        refreshToken: 'background-refresh',
+      );
+
+      final token = await sessions.refreshAccessToken();
+
+      expect(token, 'background.access.token');
+      expect(sessions.session?.refreshToken, 'background-refresh');
+      expect(backend.calls, 0);
+    });
+
+    test('a session the other isolate ended is ended here too', () async {
+      final backend = FakeRefreshApi(FakeRefreshApi.issues('unused.access.token'));
+      final (sessions, store) = await signedIn(backend);
+      store.session = null;
+
+      await expectLater(
+        sessions.refreshAccessToken(),
+        throwsA(isA<ApiException>()
+            .having((e) => e.failure, 'failure', ApiFailure.unauthorized)),
+      );
+      expect(sessions.session, isNull);
+      expect(backend.calls, 0);
+    });
+
+    test('a lost refresh response is retried once at once with the same token',
+        () async {
+      final backend = FakeRefreshApi(FakeRefreshApi.issues('new.access.token'))
+        ..offline = true;
+      final (sessions, store) = await signedIn(backend);
+
+      await expectLater(sessions.refreshAccessToken(), throwsA(isA<ApiException>()));
+
+      expect(backend.sentRefreshTokens, ['refresh-token', 'refresh-token']);
       expect(store.session?.refreshToken, 'refresh-token');
     });
 
@@ -182,5 +262,17 @@ void main() {
     expect(signInErrorMessage(const NotCollectorException()),
         contains('collectors'));
     expect(signInErrorMessage(StateError('x')), isNotEmpty);
+  });
+
+  test("a 403 shows the backend's reason, such as the day being approved",
+      () {
+    final approved = ApiException.fromResponse(
+      403,
+      errorBody(403,
+          'Your collections for today have been approved. You can sign in again tomorrow'),
+    );
+    expect(signInErrorMessage(approved), contains('sign in again tomorrow'));
+    expect(signInErrorMessage(const ApiException(ApiFailure.forbidden)),
+        contains('collectors'));
   });
 }

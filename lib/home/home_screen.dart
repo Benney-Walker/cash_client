@@ -15,10 +15,9 @@ import '../theme/app_status_colors.dart';
 /// When payments are waiting on the phone or were refused, an Outbox row
 /// sits above the actions (design R2) and opens the Outbox.
 ///
-/// Record deposit opens the payment flow. Today's totals and the recent
-/// list aren't connected to the backend yet, so they show an empty day;
-/// Submit explains that it's not available. That button stays enabled on
-/// purpose: a disabled button gives no reason, a message does.
+/// Record deposit opens the payment flow and Submit today's collections the
+/// Submit today screen. Today's totals and the recent list aren't connected
+/// to the backend yet, so they show an empty day.
 ///
 /// There's no Withdrawal button: collector withdrawal requests were removed
 /// (owner decision 2026-11-15). Members withdraw at a branch office.
@@ -28,6 +27,7 @@ class HomeScreen extends StatelessWidget {
     required this.staffName,
     required this.onSeeAll,
     required this.onRecordDeposit,
+    required this.onSubmitDay,
     this.outboxWaiting = 0,
     this.outboxRefused = 0,
     this.onOpenOutbox,
@@ -42,6 +42,7 @@ class HomeScreen extends StatelessWidget {
 
   /// Opens the record-payment flow (savings deposit or share purchase).
   final VoidCallback onRecordDeposit;
+  final VoidCallback onSubmitDay;
 
   /// Payments on the phone the backend doesn't have yet. The Outbox row
   /// only shows when there's at least one.
@@ -90,10 +91,7 @@ class HomeScreen extends StatelessWidget {
                   const SizedBox(height: 8),
                   OutlinedButton.icon(
                     key: const Key('home.submitDay'),
-                    onPressed: () => _notAvailable(
-                      context,
-                      "Submitting the day's collections isn't available yet.",
-                    ),
+                    onPressed: onSubmitDay,
                     icon: const Icon(Icons.send_outlined),
                     label: const Text("Submit today's collections"),
                   ),
@@ -119,16 +117,6 @@ class HomeScreen extends StatelessWidget {
         ),
       ),
     );
-  }
-
-  static void _notAvailable(BuildContext context, String message) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text('$message It needs a backend update first.'),
-        ),
-      );
   }
 }
 

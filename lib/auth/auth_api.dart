@@ -7,6 +7,15 @@ import '../api/api_exception.dart';
 import '../api/endpoint.dart';
 import 'auth_session.dart';
 
+/// What a refresh returns: a new access token, and the refresh token to use
+/// next time (the one sent is used up).
+class TokenPair {
+  const TokenPair({required this.accessToken, required this.refreshToken});
+
+  final String accessToken;
+  final String refreshToken;
+}
+
 /// Calls the backend's public authentication endpoints. These take no
 /// bearer token, so they use a plain client rather than
 /// `AuthenticatedClient`.
@@ -15,12 +24,18 @@ class AuthApi {
     required String baseUrl,
     http.Client? client,
     this.timeout = const Duration(seconds: 20),
+    this.refreshTimeout = const Duration(seconds: 10),
   })  : _baseUrl = baseUrl.trim(),
         _client = client ?? http.Client();
 
   final String _baseUrl;
   final http.Client _client;
   final Duration timeout;
+
+  /// Shorter than [timeout], so that when a refresh response is lost the
+  /// session manager's retry still lands inside the backend's 30-second
+  /// grace for it.
+  final Duration refreshTimeout;
 
   /// `POST /api/auth/v1/collector-login`.
   ///
@@ -45,51 +60,51 @@ class AuthApi {
     return session;
   }
 
-  /// `POST /api/auth/v1/refresh-collector-token`. Returns a new access
-  /// token. Only collector refresh tokens are accepted here.
+  /// `POST /api/auth/v1/refresh-collector-token`. Only collector refresh
+  /// tokens are accepted here.
   ///
-  /// The backend answers with the bare token as the response body, not a
-  /// JSON object (contract checked 14 Nov 2026). Because the app asks for
-  /// JSON, Spring may also send it as a JSON string in quotes, so both are
-  /// accepted.
+  /// Refresh tokens rotate (backend, 15 Nov 2026): the response is
+  /// `{ authToken, refreshToken }`, and the refresh token sent is used up.
+  /// Spending it again ends the whole session, except within 30 seconds of
+  /// a refresh whose response was lost, so the caller must keep the new one
+  /// (see [SessionManager]).
   ///
   /// The backend answers 401 ([ApiFailure.unauthorized]) when the refresh
-  /// token has expired or is invalid, the account is no longer active, or
-  /// it isn't a collector's. It doesn't issue a new refresh token, so once
-  /// that one expires the collector has to sign in again.
-  Future<String> refreshAccessToken(String refreshToken) async {
+  /// token has expired, is used up or revoked, the account is no longer
+  /// active, or it isn't a collector's. Throws [ApiException].
+  Future<TokenPair> refreshTokens(String refreshToken) async {
     final response = await _post(
       '/api/auth/v1/refresh-collector-token',
       {'refreshToken': refreshToken},
+      timeout: refreshTimeout,
     );
-    final accessToken = _bareToken(response.body);
-    if (accessToken == null) {
+    final json = _jsonObject(response.body);
+    final accessToken = json?['authToken'];
+    final nextRefreshToken = json?['refreshToken'];
+    if (accessToken is! String ||
+        !_jwtShape.hasMatch(accessToken.trim()) ||
+        nextRefreshToken is! String ||
+        nextRefreshToken.trim().isEmpty) {
       throw const ApiException(ApiFailure.unexpectedResponse, statusCode: 200);
     }
-    return accessToken;
+    return TokenPair(
+      accessToken: accessToken.trim(),
+      refreshToken: nextRefreshToken.trim(),
+    );
   }
 
-  // The backend's tokens are signed JWTs: three base64url parts joined by
-  // dots. Checking the shape catches a proxy error page or other stray body
-  // before it's saved and sent as a bearer token.
+  /// `POST /api/auth/v1/logout`: the backend ends this phone's session, so
+  /// its tokens stop working at once (backend, 15 Nov 2026). Always 204,
+  /// whether or not the token was known. Throws [ApiException].
+  Future<void> logout(String refreshToken) async {
+    await _post('/api/auth/v1/logout', {'refreshToken': refreshToken});
+  }
+
+  // The backend's access tokens are signed JWTs: three base64url parts
+  // joined by dots. Checking the shape catches a proxy error page or other
+  // stray body before it's saved and sent as a bearer token.
   static final _jwtShape =
       RegExp(r'^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*$');
-
-  /// The token in a bare-token body (`abc.def.ghi` or `"abc.def.ghi"`), or
-  /// null if the body isn't one.
-  static String? _bareToken(String body) {
-    var text = body.trim();
-    if (text.startsWith('"')) {
-      try {
-        final decoded = jsonDecode(text);
-        if (decoded is! String) return null;
-        text = decoded.trim();
-      } on FormatException {
-        return null;
-      }
-    }
-    return _jwtShape.hasMatch(text) ? text : null;
-  }
 
   static Map<String, dynamic>? _jsonObject(String body) {
     try {
@@ -100,12 +115,13 @@ class AuthApi {
     }
   }
 
-  /// Sends a JSON body and returns a 200 response. Any other status becomes
-  /// an [ApiException] built from the backend's standard error body.
+  /// Sends a JSON body and returns the 2xx response. Any other status
+  /// becomes an [ApiException] built from the backend's standard error body.
   Future<http.Response> _post(
     String path,
-    Map<String, Object?> body,
-  ) async {
+    Map<String, Object?> body, {
+    Duration? timeout,
+  }) async {
     final uri = _endpoint(path);
     final http.Response response;
     try {
@@ -118,7 +134,7 @@ class AuthApi {
             },
             body: jsonEncode(body),
           )
-          .timeout(timeout);
+          .timeout(timeout ?? this.timeout);
     } on TimeoutException {
       throw const ApiException(ApiFailure.network);
     } on http.ClientException {
@@ -126,7 +142,7 @@ class AuthApi {
       throw const ApiException(ApiFailure.network);
     }
 
-    if (response.statusCode != 200) {
+    if (response.statusCode < 200 || response.statusCode >= 300) {
       throw ApiException.fromResponse(response.statusCode, response.body);
     }
     return response;

@@ -50,8 +50,13 @@ class AuthSession {
     );
   }
 
-  /// The same session with a new access token, after a refresh.
-  AuthSession withAccessToken(String accessToken) => AuthSession(
+  /// The same session with the tokens from a refresh. Refresh tokens
+  /// rotate, so both change.
+  AuthSession withTokens({
+    required String accessToken,
+    required String refreshToken,
+  }) =>
+      AuthSession(
         staffId: staffId,
         staffName: staffName,
         roles: roles,

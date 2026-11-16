@@ -4,6 +4,7 @@ import '../app_services.dart';
 import '../auth/auth_session.dart';
 import '../collector/payment_flow.dart';
 import '../outbox/outbox_screen.dart';
+import '../submission/submit_day_screen.dart';
 import '../settings/app_info.dart';
 import '../settings/settings_screen.dart';
 import '../settings/theme_controller.dart';
@@ -80,6 +81,22 @@ class _HomeShellState extends State<HomeShell> {
 
   void _recordDeposit() {
     final services = widget.services;
+    // Submitting closes the day (decision D35). Saying so here beats taking
+    // a payment offline that the server will refuse.
+    if (services.dayClosure.isClosed) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: const Text(
+              "You've submitted today's collections. No more payments can be "
+              "recorded until they're approved.",
+            ),
+            action: SnackBarAction(label: 'View', onPressed: _submitDay),
+          ),
+        );
+      return;
+    }
     startPaymentFlow(
       context,
       directory: services.members,
@@ -89,6 +106,20 @@ class _HomeShellState extends State<HomeShell> {
         services.sync.paymentQueued(queued);
         return queued;
       },
+    );
+  }
+
+  void _submitDay() {
+    final services = widget.services;
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => SubmitDayScreen(
+          api: services.collectorApi,
+          outbox: services.outbox,
+          dayClosure: services.dayClosure,
+          syncOutbox: services.sync.syncNow,
+        ),
+      ),
     );
   }
 
@@ -146,6 +177,7 @@ class _HomeShellState extends State<HomeShell> {
                 staffName: widget.session.staffName,
                 onSeeAll: () => _select(_history),
                 onRecordDeposit: _recordDeposit,
+                onSubmitDay: _submitDay,
                 outboxWaiting: outbox.waiting.length,
                 outboxRefused: outbox.refused.length,
                 onOpenOutbox: _openOutbox,
