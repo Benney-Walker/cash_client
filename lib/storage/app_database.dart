@@ -13,8 +13,9 @@ class AppDatabase {
   Future<Database>? _db;
 
   /// Version 1: member list. Version 2: outbox. Version 3: locks shared
-  /// between the app and the background sync.
-  static const version = 3;
+  /// between the app and the background sync. Version 4: each outbox
+  /// payment's last correction time.
+  static const version = 4;
 
   Future<Database> get database => _db ??= _open();
 
@@ -32,6 +33,11 @@ class AppDatabase {
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) await _createOutbox(db);
         if (oldVersion < 3) await _createLocks(db);
+        // Created fresh above from version 2 on, with the column already.
+        if (oldVersion >= 2 && oldVersion < 4) {
+          await db.execute('ALTER TABLE outbox ADD COLUMN updated_at TEXT');
+          await db.execute('UPDATE outbox SET updated_at = recorded_at');
+        }
       },
     );
   }
@@ -74,9 +80,10 @@ class AppDatabase {
 
   /// Payments recorded without a connection, until the backend has them.
   ///
-  /// Times are UTC ISO-8601 text. A row is deleted once the backend has
-  /// saved the payment; until then it's waiting (inside its 10 minutes),
-  /// ready to send, or refused (refusal_reason set).
+  /// Times are UTC ISO-8601 text. `recorded_at` is the payment's phone
+  /// `createdAt` and `updated_at` its last correction. A row is deleted once
+  /// the backend has saved the payment; until then it's held (inside its 5
+  /// minutes, correctable), ready to send, or refused (refusal_reason set).
   static Future<void> _createOutbox(Database db) async {
     await db.execute('''
       CREATE TABLE outbox (
@@ -88,6 +95,7 @@ class AppDatabase {
         amount_pesewas INTEGER NOT NULL,
         description TEXT,
         recorded_at TEXT NOT NULL,
+        updated_at TEXT,
         refusal_reason TEXT,
         refused_at TEXT,
         last_tried_at TEXT,

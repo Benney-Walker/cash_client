@@ -243,7 +243,7 @@ void main() {
     // the test, so the sync leaves it alone.
     MemoryOutboxStore oneWaiting() => MemoryOutboxStore([
           queuedPayment(
-            recordedAt: DateTime.now().subtract(const Duration(minutes: 1)),
+            createdAt: DateTime.now().subtract(const Duration(minutes: 1)),
           ),
         ]);
 

@@ -5,8 +5,12 @@ import '../collector/collector_models.dart';
 import '../common/money.dart';
 import '../storage/app_database.dart';
 
-/// A payment recorded without a connection, kept on the phone until the
-/// backend has it (app spec 2.3 and 2.4a).
+/// A recorded payment, kept on the phone until the backend has it.
+///
+/// Every payment starts here (owner decision 2026-11-23): it's held for 5
+/// minutes, during which the collector can correct the amount or the
+/// account, then sent with its phone times and applied by the backend on
+/// arrival. Without a connection it simply waits longer.
 @immutable
 class OutboxPayment {
   const OutboxPayment({
@@ -16,12 +20,13 @@ class OutboxPayment {
     required this.accountNumber,
     required this.type,
     required this.amount,
-    required this.recordedAt,
+    required this.createdAt,
+    DateTime? updatedAt,
     this.note,
     this.refusalReason,
     this.refusedAt,
     this.lastTriedAt,
-  });
+  }) : updatedAt = updatedAt ?? createdAt;
 
   /// Made on the confirm screen and sent with every attempt, so the backend
   /// never records it twice, even if an earlier attempt did get through.
@@ -35,9 +40,13 @@ class OutboxPayment {
   final Cedis amount;
   final String? note;
 
-  /// Phone time when the collector recorded it, in UTC. Sent to the backend
-  /// as `recordedAt`.
-  final DateTime recordedAt;
+  /// Phone time when the collector recorded it, in UTC. Sent as
+  /// `createdAt`; it decides the collector's day on the backend.
+  final DateTime createdAt;
+
+  /// Phone time of the last correction, in UTC; [createdAt] if never
+  /// corrected. Sent as `updatedAt`.
+  final DateTime updatedAt;
 
   /// The backend's reason, once it has refused the payment.
   final String? refusalReason;
@@ -48,13 +57,17 @@ class OutboxPayment {
 
   bool get isRefused => refusalReason != null;
 
-  /// When its 10 minutes are up and it can be sent (decision D40: offline
-  /// payments arrive at the backend final).
-  DateTime get dueAt => recordedAt.add(correctionWindow);
+  /// When its 5 minutes are up and it can be sent. Corrections don't move
+  /// it (owner decision 2026-11-24).
+  DateTime get dueAt => createdAt.add(holdWindow);
 
   bool isDue(DateTime now) => !now.isBefore(dueAt);
 
-  /// Time left in its 10 minutes, never negative.
+  /// Still inside its 5 minutes and not refused: the collector can correct
+  /// it. (A refused payment was already sent; it can only be retried.)
+  bool isCorrectable(DateTime now) => !isRefused && !isDue(now);
+
+  /// Time left in its 5 minutes, never negative.
   Duration timeLeft(DateTime now) {
     final left = dueAt.difference(now);
     return left.isNegative ? Duration.zero : left;
@@ -77,6 +90,18 @@ abstract interface class OutboxStore {
 
   /// The backend has it: forget it.
   Future<void> remove(String idempotencyKey);
+
+  /// A correction inside the 5 minutes: the account (and so the type) and
+  /// the amount, with [updatedAt] the phone time of the change. Returns
+  /// false when it's too late: the 5 minutes are up, it's being sent, or
+  /// it's gone.
+  Future<bool> correct(
+    String idempotencyKey, {
+    required PaymentType type,
+    required String accountNumber,
+    required Cedis amount,
+    required DateTime updatedAt,
+  });
 
   /// It didn't get through (no connection, timeout, server fault). Keeps
   /// any earlier refusal.
@@ -108,7 +133,8 @@ class SqliteOutboxStore implements OutboxStore {
         'payment_type': payment.type.wireName,
         'amount_pesewas': payment.amount.pesewas,
         'description': payment.note,
-        'recorded_at': _text(payment.recordedAt),
+        'recorded_at': _text(payment.createdAt),
+        'updated_at': _text(payment.updatedAt),
       },
       // The same key twice is the same payment; keep the first copy.
       conflictAlgorithm: ConflictAlgorithm.ignore,
@@ -151,6 +177,37 @@ class SqliteOutboxStore implements OutboxStore {
       where: 'idempotency_key = ?',
       whereArgs: [idempotencyKey],
     );
+  }
+
+  @override
+  Future<bool> correct(
+    String idempotencyKey, {
+    required PaymentType type,
+    required String accountNumber,
+    required Cedis amount,
+    required DateTime updatedAt,
+  }) async {
+    final db = await _db.database;
+    // One statement, so a sync claiming it at the same moment can't send the
+    // old amount while this writes the new one: only an unclaimed, unrefused
+    // payment still inside its 5 minutes changes.
+    final changed = await db.rawUpdate(
+      'UPDATE $_table SET payment_type = ?, account_number = ?, '
+      'amount_pesewas = ?, updated_at = ? '
+      'WHERE idempotency_key = ? AND refusal_reason IS NULL '
+      'AND (claimed_until IS NULL OR claimed_until < ?) '
+      'AND recorded_at > ?',
+      [
+        type.wireName,
+        accountNumber,
+        amount.pesewas,
+        _text(updatedAt),
+        idempotencyKey,
+        _text(updatedAt),
+        _text(updatedAt.subtract(holdWindow)),
+      ],
+    );
+    return changed == 1;
   }
 
   @override
@@ -203,9 +260,9 @@ class SqliteOutboxStore implements OutboxStore {
 
   static OutboxPayment? _fromRow(Map<String, Object?> row) {
     final type = PaymentType.fromWire(row['payment_type']);
-    final recordedAt = _time(row['recorded_at']);
+    final createdAt = _time(row['recorded_at']);
     final pesewas = row['amount_pesewas'];
-    if (type == null || recordedAt == null || pesewas is! int) return null;
+    if (type == null || createdAt == null || pesewas is! int) return null;
     return OutboxPayment(
       idempotencyKey: row['idempotency_key'] as String,
       staffId: row['staff_id'] as String,
@@ -214,7 +271,8 @@ class SqliteOutboxStore implements OutboxStore {
       type: type,
       amount: Cedis.pesewas(pesewas),
       note: row['description'] as String?,
-      recordedAt: recordedAt,
+      createdAt: createdAt,
+      updatedAt: _time(row['updated_at']),
       refusalReason: row['refusal_reason'] as String?,
       refusedAt: _time(row['refused_at']),
       lastTriedAt: _time(row['last_tried_at']),

@@ -17,12 +17,21 @@ import 'outbox_store.dart';
 ///
 /// Refused payments are retried on every sync automatically; Try again
 /// runs a sync now. They can't be changed or removed here (owner decision
-/// 2026-11-15): the admin sorts out the cause.
+/// 2026-11-15): the admin sorts out the cause. A payment still in its 5
+/// minutes has Correct (design C1, owner decision 2026-11-24).
 class OutboxScreen extends StatefulWidget {
-  const OutboxScreen({super.key, required this.outbox, required this.onSync});
+  const OutboxScreen({
+    super.key,
+    required this.outbox,
+    required this.onSync,
+    this.onCorrect,
+  });
 
   final Outbox outbox;
   final Future<SyncReport> Function() onSync;
+
+  /// Opens the correction for a payment in its 5 minutes.
+  final void Function(OutboxPayment payment)? onCorrect;
 
   @override
   State<OutboxScreen> createState() => _OutboxScreenState();
@@ -128,14 +137,16 @@ class _OutboxScreenState extends State<OutboxScreen> {
                         for (final (i, p) in waiting.indexed)
                           _WaitingRow(
                             key: Key('outbox.waiting.$i'),
+                            index: i,
                             payment: p,
                             now: now,
+                            onCorrect: widget.onCorrect,
                           ),
                       ],
                       if (!outbox.isEmpty) ...[
                         const SizedBox(height: 12),
                         Text(
-                          'Payments are sent when their 10 minutes are up and '
+                          'Payments are sent when their 5 minutes are up and '
                           "the phone is online, even when the app is closed. "
                           'Refused payments are tried again each time.',
                           style: Theme.of(context).textTheme.bodySmall?.copyWith(
@@ -215,7 +226,7 @@ class _SectionLabel extends StatelessWidget {
           child: Text(
             _refused
                 ? 'Refused ($count) · report to your admin'
-                : 'Waiting to send ($count)',
+                : 'On this phone ($count)',
             key: Key(_refused ? 'outbox.refusedLabel' : 'outbox.waitingLabel'),
             style: Theme.of(context).textTheme.titleSmall?.copyWith(
                   color: color,
@@ -311,7 +322,7 @@ class _RefusedRow extends StatelessWidget {
             const SizedBox(height: 4),
             Text(
               [
-                'Recorded ${clockTime(payment.recordedAt)}',
+                'Recorded ${clockTime(payment.createdAt)}',
                 if (refusedAt != null) 'refused ${clockTime(refusedAt)}',
                 if (triedAt != null && triedAt != refusedAt)
                   'last tried ${clockTime(triedAt)}',
@@ -327,49 +338,44 @@ class _RefusedRow extends StatelessWidget {
 }
 
 class _WaitingRow extends StatelessWidget {
-  const _WaitingRow({super.key, required this.payment, required this.now});
+  const _WaitingRow({
+    super.key,
+    required this.index,
+    required this.payment,
+    required this.now,
+    this.onCorrect,
+  });
 
+  final int index;
   final OutboxPayment payment;
   final DateTime now;
+  final void Function(OutboxPayment payment)? onCorrect;
 
   @override
   Widget build(BuildContext context) {
-    final status = AppStatusColors.of(context);
-    final left = payment.timeLeft(now);
+    final onCorrect = this.onCorrect;
+    final correctable = onCorrect != null && payment.isCorrectable(now);
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(12),
-        child: _PaymentLine(
-          payment: payment,
-          trailing: DecoratedBox(
-            decoration: BoxDecoration(
-              color: status.warningContainer,
-              borderRadius: BorderRadius.circular(8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _PaymentLine(
+              payment: payment,
+              trailing: OutboxStatusChip(payment: payment, now: now),
             ),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    left > Duration.zero ? Icons.schedule : Icons.cloud_off,
-                    size: 14,
-                    color: status.warning,
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    outboxStatusLabel(left),
-                    style: TextStyle(
-                      color: status.warning,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      fontFeatures: const [FontFeature.tabularFigures()],
-                    ),
-                  ),
-                ],
+            if (correctable)
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  key: Key('outbox.correct.$index'),
+                  onPressed: () => onCorrect(payment),
+                  icon: const Icon(Icons.edit_outlined, size: 18),
+                  label: const Text('Correct'),
+                ),
               ),
-            ),
-          ),
+          ],
         ),
       ),
     );

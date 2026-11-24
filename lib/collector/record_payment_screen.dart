@@ -25,15 +25,34 @@ class PaymentDraft {
 
 /// Step 2 of recording a payment (design P1): the type, amount and an
 /// optional note for the chosen member.
+///
+/// The same form corrects a payment during its 5 minutes on the phone
+/// (design C1, owner decision 2026-11-24): filled in with [initialType]
+/// and [initialAmount], titled "Correct payment", without the note, which
+/// a correction doesn't change.
 class RecordPaymentScreen extends StatefulWidget {
   const RecordPaymentScreen({
     super.key,
     required this.member,
     required this.onContinue,
+    this.title = 'Record payment',
+    this.actionLabel = 'Continue',
+    this.showNote = true,
+    this.initialType,
+    this.initialAmount,
+    this.banner,
   });
 
   final CollectorMember member;
   final void Function(BuildContext context, PaymentDraft draft) onContinue;
+  final String title;
+  final String actionLabel;
+  final bool showNote;
+  final PaymentType? initialType;
+  final Cedis? initialAmount;
+
+  /// Shown under the member card, such as the time left to correct.
+  final Widget? banner;
 
   @override
   State<RecordPaymentScreen> createState() => _RecordPaymentScreenState();
@@ -41,9 +60,14 @@ class RecordPaymentScreen extends StatefulWidget {
 
 class _RecordPaymentScreenState extends State<RecordPaymentScreen> {
   final _formKey = GlobalKey<FormState>();
-  final _amount = TextEditingController();
+  late final _amount = TextEditingController(
+    text: widget.initialAmount?.toDecimalString(),
+  );
   final _note = TextEditingController();
-  late PaymentType? _type = widget.member.paymentTypes.firstOrNull;
+  late PaymentType? _type =
+      widget.member.paymentTypes.contains(widget.initialType)
+          ? widget.initialType
+          : widget.member.paymentTypes.firstOrNull;
 
   // The backend stores notes up to 500 characters.
   static const _maxNote = 500;
@@ -88,7 +112,7 @@ class _RecordPaymentScreenState extends State<RecordPaymentScreen> {
     final type = _type;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Record payment')),
+      appBar: AppBar(title: Text(widget.title)),
       body: Form(
         key: _formKey,
         child: ListView(
@@ -105,6 +129,10 @@ class _RecordPaymentScreenState extends State<RecordPaymentScreen> {
                 subtitle: const Text('Member'),
               ),
             ),
+            if (widget.banner != null) ...[
+              const SizedBox(height: 8),
+              widget.banner!,
+            ],
             const SizedBox(height: 16),
             if (types.isEmpty)
               Text(
@@ -145,7 +173,7 @@ class _RecordPaymentScreenState extends State<RecordPaymentScreen> {
               TextFormField(
                 key: const Key('record.amount'),
                 controller: _amount,
-                autofocus: true,
+                autofocus: widget.initialAmount == null,
                 keyboardType:
                     const TextInputType.numberWithOptions(decimal: true),
                 // Cedis and pesewas only: up to 9 digits, a point, 2 more.
@@ -164,6 +192,7 @@ class _RecordPaymentScreenState extends State<RecordPaymentScreen> {
                 ),
                 validator: _validateAmount,
               ),
+              if (widget.showNote) ...[
               const SizedBox(height: 12),
               TextFormField(
                 key: const Key('record.note'),
@@ -176,11 +205,12 @@ class _RecordPaymentScreenState extends State<RecordPaymentScreen> {
                   labelText: 'Note (optional)',
                 ),
               ),
+              ],
               const SizedBox(height: 16),
               GradientButton(
                 key: const Key('record.continue'),
                 onPressed: _continue,
-                child: const Text('Continue'),
+                child: Text(widget.actionLabel),
               ),
             ],
           ],

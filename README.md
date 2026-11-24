@@ -10,16 +10,16 @@ The app is a client of the `bankingbackend` Spring Boot API. It holds no busines
 |---|---|
 | Light and dark theme (Indigo Aurora palette, lighter gradient tints, Inter font) | Done |
 | Redesign with the lighter tints (12 Nov 2026) | Done for every screen: sign-in, Home, History and Settings |
-| Home screen layout and bottom bar (Home, History, Settings) | Done. Record deposit works; today's totals and recent list not connected yet |
+| Home screen layout and bottom bar (Home, History, Settings) | Done. Record deposit and Submit work; today's totals and recent list not connected yet |
 | Settings: profile, theme choice (system / light / dark), app version and sign-out | Done |
 | Sign-in (collectors only) and sign-out | Done. Tokens kept in secure storage |
 | Automatic token refresh; back to sign-in when the backend ends the session | Done |
-| One device per collector | Not started. Waiting on backend decision D36 |
+| One device per collector | Done: the phone's device ID at sign-in and refresh (backend, 23 Nov 2026, D36) |
 | Member lookup: branch members' names and savings/shares accounts, saved for offline | Done (backend PR #14) |
-| Savings deposits and share purchases | Done online and offline, with sync in the background and the Outbox (backend PR #14) |
-| Corrections within 10 minutes | Not started (backend ready in PR #14). The saved screen counts the window down |
+| Savings deposits and share purchases | Done: held 5 minutes on the phone, then sent; sync in the background and the Outbox (backend, 23 Nov 2026) |
+| Corrections within the 5 minutes | Done in the app (design C1): amount and account; no cancelling |
 | Withdrawal requests | Removed (owner decision, 15 Nov 2026). Members withdraw at a branch office |
-| Location tracking | Not started. Needs backend support |
+| Location tracking | Not started. The backend now refuses a payment without a location point within 15 minutes of it (D34), so payments are refused until this is built |
 | Transaction history | Screen in place, empty. Backend day summary in PR #14 |
 | Daily cash submission and session ending | Done (backend PR #14, decision D35). No rejection step: the approver records the cash counted |
 
@@ -27,9 +27,9 @@ The app is a client of the `bankingbackend` Spring Boot API. It holds no busines
 
 - Flutter SDK with Dart `^3.12.0` (see `pubspec.yaml`)
 - Android SDK for device builds. Android package: `com.bynexlabs.cash_client`. Minimum Android 7.0 (API 24), required by `shared_preferences` (`flutter_secure_storage` needs 6.0)
-- The database (`cash_client.db`) is at version 3: member list (1), outbox (2), shared locks (3)
+- The database (`cash_client.db`) is at version 4: member list (1), outbox (2), shared locks (3), outbox correction times (4)
 - Android builds use core library desugaring (`android/app/build.gradle.kts`), which `flutter_local_notifications` needs
-- A running `bankingbackend` with backend PR #14 at `df9f555` or later (15 Nov 2026): collector payments, rotating refresh tokens, logout and the daily submission. Earlier backends answer refresh with a bare token, which this app no longer reads
+- A running `bankingbackend` with backend PR #14 at `0a3a68b` or later (23 Nov 2026): device ID at sign-in, payments final on arrival with `createdAt`/`updatedAt`, rotating refresh tokens, logout and the daily submission. Older backends don't accept what this app sends
 
 ## Run and test
 
@@ -107,15 +107,17 @@ Design P1, "two screens" (15 Nov 2026), in `lib/collector/`. Collectors record t
 
 1. **Choose member** (`member_picker_screen.dart`). The branch member list from `GET /api/collector/v1/members`: names and savings/shares account numbers only, never other member details. Search by name or account number. When two members share a name, their account numbers show so they can be told apart.
 2. **Record payment** (`record_payment_screen.dart`). Savings or Shares (only the types the member has an account for), the account number, the amount in GH₵ and an optional note (up to 500 characters). Amounts are cedis and pesewas, 2 decimal places (owner decision, 15 Nov 2026), up to GH₵ 999,999,999.99.
-3. **Confirm payment** (`confirm_payment_screen.dart`). Member, account and amount are checked before anything is sent; only this screen sends the payment. Edit goes back.
-4. **Payment saved** (`payment_saved_screen.dart`). Shown once the backend has saved it, or **Saved on this phone** when it couldn't be reached (see Offline payments). The payment is **Pending** for its 10-minute correction window, counted down from the window length the server sent (on the phone's monotonic clock, so a wrong phone clock can't change it); the member's balance and SMS follow when it closes. Done (or back) goes home, never to the confirm screen.
+3. **Confirm payment** (`confirm_payment_screen.dart`). Member, account and amount are checked before the payment is kept; only this screen records it. Edit goes back.
+4. **Saved on this phone** (`payment_saved_screen.dart`), design C1 (24 Nov 2026). Every payment is held on the phone for **5 minutes** (owner decision, 23 Nov 2026), shown as "Can correct · 4:12". **Correct** reopens the Record payment form filled in, titled "Correct payment", where the collector changes the amount or moves it to the member's other account (savings or shares). The note can't change, the 5 minutes don't restart, and there's no cancelling (owner decisions, 24 Nov 2026). After the 5 minutes it's sent once there's a connection; when the server has it, the chip says **Sent**. Done (or back) goes home, never to the confirm screen.
 
-Sending (`collector_api.dart`):
+Corrections (`correct_payment.dart`): the member's accounts come from the branch list saved on the phone (if the member isn't in it any more, only the amount can change). A correction made too late, because the 5 minutes ran out or the payment is already being sent, is refused on the phone with "The 5 minutes are up, so this payment can't be changed. It's sent as it was." The backend has no correction endpoint any more: what arrives is final.
 
-- `POST /api/collector/v1/payments` with `idempotencyKey`, `type` (SAVINGS or SHARES), `accountNumber`, `amount` and optional `description`, through the authenticated client.
+Sending (`collector_api.dart`, from the sync):
+
+- `POST /api/collector/v1/payments` with `idempotencyKey`, `type` (SAVINGS or SHARES), `accountNumber`, `amount`, optional `description`, and the phone's `createdAt` (when it was recorded) and `updatedAt` (its last correction, the same if never corrected), through the authenticated client. The backend applies it on arrival: `COMPLETED`, or `FAILED` if the account was frozen meanwhile (backend, 23 Nov 2026). The phone's `createdAt` decides the collector's day.
 - The amount is held as whole pesewas (`lib/common/money.dart`) and written into the JSON as an exact decimal literal such as `50.50`, so it reaches the backend's `BigDecimal` without passing through a floating-point number.
-- Each payment gets a random UUID idempotency key when the confirm screen opens. Every attempt to send that payment, including later syncs, uses the same key, so the backend never records it twice.
-- When the backend refuses a payment, its own message is shown on the confirm screen word for word and nothing is saved, for example "This member's first deposit must be made at the office" (409), "This member isn't in your branch" (403), or an account that isn't active (409).
+- Each payment gets a random UUID idempotency key when the confirm screen opens. Every attempt to send it uses the same key, so the backend never records it twice. A correction keeps the key: it happens before the payment is ever sent.
+- When the backend refuses a payment, it moves to the Outbox's refused list with the backend's own message, word for word, for example "This member's first deposit must be made at the office" (409), "This member isn't in your branch" (403), or an account that isn't active (409).
 
 Member list on the phone (`member_cache.dart`, `member_directory.dart`):
 
@@ -124,31 +126,29 @@ Member list on the phone (`member_cache.dart`, `member_directory.dart`):
 - The list is cleared when the collector signs out or the session ends.
 - The SQLite code itself isn't covered by tests (that needs a native SQLite library on the test machine); the logic around it is tested with an in-memory cache.
 
-Not in this step: corrections within the 10 minutes, and connecting home's totals and the History tab to the backend.
+Not yet: connecting home's totals and the History tab to the backend.
 
 ## Submitting the day
 
 Design D1, "Submit screen" (16 Nov 2026), in `lib/submission/`, against backend PR #14 (decision D35, 15 Nov 2026).
 
-- **Before submitting** (`submit_day_screen.dart`): the screen first sends whatever is ready in the outbox, then loads today's totals (`GET /api/collector/v1/payments`: count, savings, shares, total) and the latest submission. It shows the total and count on a glass card, savings and shares below, and two checks:
-  - **The outbox.** Nothing waiting on the phone ✓, or payments still on the phone (they go after their 10 minutes once online), or refused payments: "call your admin", which opens the Outbox.
-  - **The 10-minute windows.** No payments in their 10 minutes ✓, or a countdown to when the last one closes.
-- **Submit is blocked** while either check isn't clear. Tapping it says why instead of sending. Refused payments block it until the admin sorts them out (owner decision, 16 Nov 2026), because the backend doesn't know about them and the submission's expected cash would leave them out.
-- **Submitting** asks for confirmation ("You'll hand in GH₵ … No more payments can be recorded until it's approved, and approval signs you out until tomorrow"), then sends `POST /api/collector/v1/submissions`. The backend's refusals are shown word for word, for example "…You can submit after 17:50". Sending it again while waiting returns the same submission, so a retry after a lost response is safe.
+- **Before submitting** (`submit_day_screen.dart`): the screen first sends whatever is ready in the outbox, then loads today's totals (`GET /api/collector/v1/payments`: count, savings, shares, total) and the latest submission. It shows the total and count on a glass card, savings and shares below, and a check on the phone's payments: nothing on this phone ✓; "2 payments on this phone (GH₵ 70.00) · sent when you submit"; or refused payments, "call your admin", which opens the Outbox. (The 10-minute window check went with the backend's window, 23 Nov 2026.)
+- **Refused payments block Submit** until the admin sorts them out (owner decision, 16 Nov 2026), because the backend doesn't know about them and the submission's expected cash would leave them out. Tapping it says why instead of sending.
+- **Submitting** asks for confirmation ("You'll hand in GH₵ …", including the payments still on the phone, which "are sent first, so they can't be corrected after this"), then **sends every payment still on the phone, held ones too** (the backend asks for this, 23 Nov 2026), and only once the server has them all sends `POST /api/collector/v1/submissions`. If any couldn't be sent, nothing is submitted and the screen says so. The backend's refusals are shown word for word, for example "…You can submit after 17:50". Sending it again while waiting returns the same submission, so a retry after a lost response is safe.
 - **Waiting for approval**: the same screen shows a "Waiting for approval" chip, the cash to hand in (the backend's `expectedAmount`), when it was submitted, the payment count, and any failed payments counted separately. It checks the latest submission every 30 seconds.
 - **Approval** (by the branch's agent or an administrator, with the cash counted; there's no rejection) ends all the collector's sessions at once. The next request gets a 401, the refresh is refused, and the app returns to sign-in. Signing in is refused (403) for the rest of the day, with the backend's message.
 - **The day closed on the phone** (`day_closure.dart`): the app keeps a note in `sync_meta` while a submission waits, so Record deposit can explain the day is closed instead of taking a payment offline that the server would refuse. The note is updated from the backend at sign-in and on the submit screen, and cleared when the session ends.
 
-## Offline payments
+## Payments on the phone and sync
 
-Owner decisions of 7 and 15 Nov 2026, built in `lib/outbox/` and `lib/sync/`.
+Owner decisions of 15 and 23 Nov 2026, built in `lib/outbox/` and `lib/sync/`.
 
-Saving on the phone:
+On the phone:
 
-- When the confirm screen can't reach the backend (no connection, a timeout or a 5xx), the payment is saved in the `outbox` table of `cash_client.db` with the phone's time (`recordedAt`, in UTC) and the idempotency key it was just sent with. The collector sees **Saved on this phone** with a "Waiting · 9:59" countdown.
-- If that attempt did reach the backend after all, the later sync sends the same key and gets the saved payment back instead of a second one.
-- The app counts the 10 minutes from `recordedAt` and sends the payment only after them, with `recordedAt`, so it arrives final and the backend applies it straight away (decision D40). The backend accepts device times up to 5 minutes ahead of its clock.
+- Every confirmed payment is saved in the `outbox` table of `cash_client.db` with the phone's `createdAt` (in UTC), its `updatedAt` and its idempotency key, and held for its 5 minutes (see Recording a payment). Online or not makes no difference to that.
+- After the 5 minutes it's sent with `createdAt` and `updatedAt`; without a connection it waits longer. The backend accepts phone times up to 5 minutes ahead of its clock.
 - Times go to the backend as Accra time, which is UTC all year.
+- The database is at version 4: version 4 added `updated_at` to the outbox.
 
 Sync (`payment_sync.dart`):
 
@@ -156,22 +156,23 @@ Sync (`payment_sync.dart`):
 - Refused payments are tried again automatically on every sync (owner decision, 15 Nov 2026), without notifying again. Once the office fixes the cause, the next sync sends it.
 - No connection, a timeout, a 5xx or an ended session isn't a refusal: the payment just waits for the next sync, with no notification. No connection or an ended session stops the sync; a 5xx on one payment doesn't stop the rest.
 - Sent payments are removed from the outbox.
-- The app and the background sync can run at once. Each payment is claimed in the database for 2 minutes before it's sent, so the two never send the same one at the same moment.
+- The app and the background sync can run at once. Each payment is claimed in the database for 2 minutes before it's sent, so the two never send the same one at the same moment, and a correction can't land while it's being sent.
+- Before submitting, the sync sends held payments early too (`run(includeHeld: true)`).
 
 When it syncs (`sync_scheduler.dart`, `background_sync.dart`):
 
-- While the app is open: at sign-in and launch, when the app returns to the foreground, when the phone gets a connection (`connectivity_plus`), when a waiting payment's 10 minutes are up, and when the collector taps **Try again now** in the Outbox.
-- While the app is closed: Android's WorkManager (`workmanager`) runs a sync about every 15 minutes whenever there's a connection, plus one when each payment's 10 minutes are up. Android may run these a little late, so a closed app can send a payment some minutes after its 10 minutes.
+- While the app is open: at sign-in and launch, when the app returns to the foreground, when the phone gets a connection (`connectivity_plus`), when a held payment's 5 minutes are up, when the collector taps **Try again now** in the Outbox, and before submitting.
+- While the app is closed: Android's WorkManager (`workmanager`) runs a sync about every 15 minutes whenever there's a connection, plus one when each payment's 5 minutes are up. Android may run these a little late, so a closed app can send a payment some minutes after its 5 minutes.
 - Only the signed-in collector's payments are sent. Signing out, or the session ending, keeps them on the phone; they go after the same collector signs in again (owner decision, 15 Nov 2026). Sign out warns when payments haven't been sent.
-- A payment saved on the phone after the day was submitted is refused by the backend (409) until the next day, so the app stops Record deposit while a submission waits (see Submitting the day).
+- A payment created before the collector's latest submission is refused by the backend (409), so the app stops Record deposit while a submission waits (see Submitting the day).
 
 The Outbox (`outbox_screen.dart`), design R2 (15 Nov 2026):
 
 - Refused payments first, with the backend's reason, when they were recorded and refused, and **Try again now**. They can't be changed or removed on the phone (owner decision, 15 Nov 2026); the admin sorts out the cause.
-- Then waiting payments with "Waiting · 6:12", or "Sends when online" once their 10 minutes are up.
-- Tapping a refused-payment notification opens the Outbox. The notification permission (Android 13+) is asked for when the first payment is saved on the phone.
+- Then the payments on the phone: "Can correct · 4:12" with **Correct** during their 5 minutes, or "Sends when online" after.
+- Tapping a refused-payment notification opens the Outbox. The notification permission (Android 13+) is asked for when the first payment is saved.
 
-Not yet: cancelling a payment before it's sent and correcting it within its 10 minutes (owner decision 7 Nov 2026), which come with corrections. The outbox SQLite code, WorkManager and notifications aren't covered by tests; the sync rules, the Outbox screen and the offline flow are, with in-memory stand-ins.
+Until location tracking is built, the backend refuses every payment ("No location was recorded within 15 minutes of this payment…", D34), so payments land in the refused list. The outbox SQLite code, WorkManager and notifications aren't covered by tests; the sync rules, the screens and the flow are, with in-memory stand-ins.
 
 ## Settings
 

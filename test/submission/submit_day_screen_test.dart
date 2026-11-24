@@ -17,19 +17,24 @@ void main() {
 
   late DayClosure dayClosure;
   late int syncs;
+  late int sendAlls;
+  late MemoryOutboxStore outboxStore;
+  late Outbox box;
 
   Future<void> pumpSubmit(
     WidgetTester tester, {
     FakeCollectorBackend? backend,
     MemoryOutboxStore? outbox,
+    bool sendingWorks = true,
   }) async {
     syncs = 0;
+    sendAlls = 0;
     dayClosure = DayClosure(
       store: MemorySubmittedDayStore(),
       staffId: () => 'STF001',
     );
-    final store = outbox ?? MemoryOutboxStore();
-    final box = Outbox(store: store, staffId: () => 'STF001', now: () => now);
+    outboxStore = outbox ?? MemoryOutboxStore();
+    box = Outbox(store: outboxStore, staffId: () => 'STF001', now: () => now);
     await box.refresh();
     await tester.pumpWidget(MaterialApp(
       theme: AppTheme.light,
@@ -41,7 +46,16 @@ void main() {
           syncs++;
           return SyncReport.nothing;
         },
-        now: () => now,
+        // Stands in for the sync sending everything on the phone.
+        sendAllNow: () async {
+          sendAlls++;
+          if (!sendingWorks) return const SyncReport(offline: true);
+          for (final p in List.of(box.waiting)) {
+            await outboxStore.remove(p.idempotencyKey);
+          }
+          await box.refresh();
+          return SyncReport(sent: box.items.length);
+        },
       ),
     ));
     await tester.pumpAndSettle();
@@ -68,7 +82,6 @@ void main() {
     expect(find.text('GH₵ 1,040.00'), findsOneWidget);
     expect(find.text('GH₵ 200.00'), findsOneWidget);
     expect(find.text('Nothing waiting on this phone'), findsOneWidget);
-    expect(find.text('No payments in their 10 minutes'), findsOneWidget);
   });
 
   testWidgets('submitting asks first, then shows the submission waiting',
@@ -107,7 +120,7 @@ void main() {
       backend: backend,
       outbox: MemoryOutboxStore([
         queuedPayment(
-          recordedAt: now.subtract(const Duration(hours: 2)),
+          createdAt: now.subtract(const Duration(hours: 2)),
           refusalReason: 'Account 1002345678 is not active',
         ),
       ]),
@@ -121,43 +134,47 @@ void main() {
     expect(backend.submitRequests, isEmpty);
   });
 
-  testWidgets('a payment still on the phone blocks Submit', (tester) async {
+  testWidgets('payments still on the phone are sent first, then the day '
+      'is submitted', (tester) async {
     final backend = FakeCollectorBackend.working();
     await pumpSubmit(
       tester,
       backend: backend,
       outbox: MemoryOutboxStore([
-        queuedPayment(recordedAt: now.subtract(const Duration(minutes: 3))),
+        queuedPayment(createdAt: now.subtract(const Duration(minutes: 2))),
       ]),
     );
 
-    expect(find.text('1 payment still on this phone'), findsOneWidget);
+    expect(find.text('1 payment on this phone (GH₵ 50.00) · sent when you submit'),
+        findsOneWidget);
     await tapKey(tester, 'submit.button');
+    // The cash includes the held payment.
+    expect(find.textContaining('GH₵ 1,290.00'), findsOneWidget);
+    expect(find.textContaining("can't be corrected after this"), findsOneWidget);
+    await tapKey(tester, 'submit.confirm');
 
-    expect(find.textContaining("hasn't reached the server yet"), findsOneWidget);
-    expect(backend.submitRequests, isEmpty);
+    expect(sendAlls, 1);
+    expect(backend.submitRequests, hasLength(1));
+    expect(find.byKey(const Key('submit.waiting')), findsOneWidget);
   });
 
-  testWidgets('a payment in its 10 minutes blocks Submit until it closes',
-      (tester) async {
-    final backend = FakeCollectorBackend.working()
-      ..handler = (request) {
-        if (request.method == 'GET' &&
-            request.url.path.endsWith('/collector/v1/payments')) {
-          return http.Response(
-            daySummaryBody(correctableUntil: ['2026-11-15T17:46:30']),
-            200,
-          );
-        }
-        return http.Response(submissionsPage(), 200);
-      };
-    await pumpSubmit(tester, backend: backend);
+  testWidgets("if the payments on the phone can't be sent, nothing is "
+      'submitted', (tester) async {
+    final backend = FakeCollectorBackend.working();
+    await pumpSubmit(
+      tester,
+      backend: backend,
+      sendingWorks: false,
+      outbox: MemoryOutboxStore([
+        queuedPayment(createdAt: now.subtract(const Duration(minutes: 2))),
+      ]),
+    );
 
-    expect(find.text('1 payment in its 10 minutes · 6:30'), findsOneWidget);
-    await tapKey(tester, 'submit.button');
+    await tapSubmitAndConfirm(tester);
 
-    expect(find.textContaining('You can submit at'), findsOneWidget);
+    expect(find.textContaining("Couldn't send 1 payment"), findsOneWidget);
     expect(backend.submitRequests, isEmpty);
+    expect(dayClosure.isClosed, isFalse);
   });
 
   testWidgets("the backend's refusal is shown word for word", (tester) async {

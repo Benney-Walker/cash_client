@@ -226,7 +226,7 @@ String paymentBody({
   String type = 'SAVINGS',
   String accountNumber = '1002345678',
   num amount = 50.0,
-  String status = 'PENDING',
+  String status = 'COMPLETED',
 }) =>
     jsonEncode({
       'transactionId': '6f1c1a2e-0000-4000-8000-000000000001',
@@ -238,18 +238,18 @@ String paymentBody({
       'status': status,
       'failureReason': null,
       'createdAt': '2026-11-15T10:00:00',
-      'recordedAt': null,
-      'correctableUntil': '2026-11-15T10:10:00',
-      'postedAt': null,
+      'updatedAt': '2026-11-15T10:00:00',
+      'receivedAt': '2026-11-15T10:05:30',
+      'postedAt': '2026-11-15T10:05:30',
     });
 
-/// A day summary from `GET /api/collector/v1/payments`. [payments] are
-/// decoded payment bodies; [correctableUntil] overrides each one's window.
+/// A day summary from `GET /api/collector/v1/payments`, with [payments]
+/// payment bodies listed.
 String daySummaryBody({
   num savingsTotal = 1040.0,
   num sharesTotal = 200.0,
   int count = 18,
-  List<String> correctableUntil = const [],
+  int payments = 0,
 }) =>
     jsonEncode({
       'date': '2026-11-15',
@@ -258,11 +258,8 @@ String daySummaryBody({
       'sharesTotal': sharesTotal,
       'total': savingsTotal + sharesTotal,
       'payments': [
-        for (final (i, until) in correctableUntil.indexed)
-          {
-            ...jsonDecode(paymentBody(idempotencyKey: 'day-$i')) as Map,
-            'correctableUntil': until,
-          },
+        for (var i = 0; i < payments; i++)
+          jsonDecode(paymentBody(idempotencyKey: 'day-$i')),
       ],
     });
 
@@ -417,7 +414,7 @@ class MemoryOutboxStore implements OutboxStore {
     final mine = [
       for (final r in rows.values)
         if (r.payment.staffId == staffId) r.payment,
-    ]..sort((a, b) => a.recordedAt.compareTo(b.recordedAt));
+    ]..sort((a, b) => a.createdAt.compareTo(b.createdAt));
     return mine;
   }
 
@@ -434,6 +431,34 @@ class MemoryOutboxStore implements OutboxStore {
   @override
   Future<void> remove(String key) async {
     rows.remove(key);
+  }
+
+  @override
+  Future<bool> correct(
+    String key, {
+    required PaymentType type,
+    required String accountNumber,
+    required Cedis amount,
+    required DateTime updatedAt,
+  }) async {
+    final row = rows[key];
+    if (row == null || row.payment.isRefused) return false;
+    final held = row.claimedUntil;
+    if (held != null && !held.isBefore(updatedAt)) return false;
+    if (!row.payment.isCorrectable(updatedAt)) return false;
+    final p = row.payment;
+    row.payment = OutboxPayment(
+      idempotencyKey: p.idempotencyKey,
+      staffId: p.staffId,
+      memberName: p.memberName,
+      accountNumber: accountNumber,
+      type: type,
+      amount: amount,
+      note: p.note,
+      createdAt: p.createdAt,
+      updatedAt: updatedAt,
+    );
+    return true;
   }
 
   @override
@@ -474,7 +499,8 @@ class MemoryOutboxStore implements OutboxStore {
         type: p.type,
         amount: p.amount,
         note: p.note,
-        recordedAt: p.recordedAt,
+        createdAt: p.createdAt,
+        updatedAt: p.updatedAt,
         refusalReason: refusalReason ?? p.refusalReason,
         refusedAt: refusedAt ?? p.refusedAt,
         lastTriedAt: lastTriedAt ?? p.lastTriedAt,
@@ -489,11 +515,11 @@ class _Row {
   bool notified = false;
 }
 
-/// An outbox payment recorded by STF001 at [recordedAt].
+/// An outbox payment recorded by STF001 at [createdAt].
 OutboxPayment queuedPayment({
   String key = 'key-1',
   String staffId = 'STF001',
-  required DateTime recordedAt,
+  required DateTime createdAt,
   String memberName = 'Ama Owusu',
   String accountNumber = '1002345678',
   PaymentType type = PaymentType.savings,
@@ -507,9 +533,9 @@ OutboxPayment queuedPayment({
       accountNumber: accountNumber,
       type: type,
       amount: Cedis.pesewas(pesewas),
-      recordedAt: recordedAt.toUtc(),
+      createdAt: createdAt.toUtc(),
       refusalReason: refusalReason,
-      refusedAt: refusalReason == null ? null : recordedAt.toUtc(),
+      refusedAt: refusalReason == null ? null : createdAt.toUtc(),
     );
 
 class MemorySubmittedDayStore implements SubmittedDayStore {

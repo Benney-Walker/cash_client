@@ -1,29 +1,38 @@
 import 'package:flutter/material.dart';
 
+import '../outbox/outbox.dart';
 import '../outbox/outbox_store.dart';
-import 'collector_api.dart';
 import 'confirm_payment_screen.dart';
+import 'correct_payment.dart';
 import 'member_directory.dart';
 import 'member_picker_screen.dart';
 import 'payment_saved_screen.dart';
 import 'record_payment_screen.dart';
 
 /// Opens the record-payment flow (design P1): choose member → type and
-/// amount → confirm → saved (by the backend, or on the phone when there's
-/// no connection).
+/// amount → confirm → saved on the phone, held 5 minutes for corrections
+/// (design C1), then sent.
+///
+/// [onSaved] runs once a payment is in the outbox, so the sync can arrange
+/// to send it when its 5 minutes are up.
 ///
 /// The screens are pushed on top of the tabs, so if the session ends part
 /// way through, the app's auth gate closes them all.
 void startPaymentFlow(
   BuildContext context, {
   required MemberDirectory directory,
-  required CollectorApi api,
-  required Future<OutboxPayment> Function(PaymentDraft draft, String key)
-      saveOffline,
+  required Outbox outbox,
+  void Function(OutboxPayment payment)? onSaved,
 }) {
   final navigator = Navigator.of(context);
 
   void goHome() => navigator.popUntil((route) => route.isFirst);
+
+  Future<OutboxPayment> save(PaymentDraft draft, String key) async {
+    final saved = await outbox.add(draft, idempotencyKey: key);
+    onSaved?.call(saved);
+    return saved;
+  }
 
   navigator.push(
     MaterialPageRoute<void>(
@@ -37,25 +46,21 @@ void startPaymentFlow(
                 MaterialPageRoute<void>(
                   builder: (_) => ConfirmPaymentScreen(
                     draft: draft,
-                    api: api,
+                    save: save,
                     // The saved screen replaces the whole flow, so going
-                    // back can't reach the confirm screen and send the
+                    // back can't reach the confirm screen and record the
                     // payment again.
-                    onSaved: (context, payment) => navigator.pushAndRemoveUntil(
+                    onSaved: (context, saved) => navigator.pushAndRemoveUntil(
                       MaterialPageRoute<void>(
                         builder: (_) => PaymentSavedScreen(
-                          payment: payment,
-                          onDone: goHome,
-                        ),
-                      ),
-                      (route) => route.isFirst,
-                    ),
-                    saveOffline: saveOffline,
-                    onSavedOffline: (context, queued) =>
-                        navigator.pushAndRemoveUntil(
-                      MaterialPageRoute<void>(
-                        builder: (_) => PaymentSavedScreen.queued(
-                          payment: queued,
+                          payment: saved,
+                          outbox: outbox,
+                          onCorrect: (payment) => openCorrection(
+                            navigator.context,
+                            payment: payment,
+                            outbox: outbox,
+                            directory: directory,
+                          ),
                           onDone: goHome,
                         ),
                       ),

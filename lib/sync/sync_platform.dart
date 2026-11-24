@@ -12,7 +12,7 @@ abstract interface class BackgroundScheduler {
   Future<void> ensurePeriodic();
 
   /// A sync once [delay] has passed and there's a connection, for the
-  /// payment [idempotencyKey] whose 10 minutes end then.
+  /// payment [idempotencyKey] whose 5 minutes end then.
   Future<void> scheduleOnce(String idempotencyKey, Duration delay);
 }
 

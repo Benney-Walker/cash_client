@@ -1,10 +1,13 @@
 import 'package:flutter/foundation.dart';
 
+import '../collector/collector_models.dart';
 import '../collector/record_payment_screen.dart';
+import '../common/money.dart';
 import 'outbox_store.dart';
 
-/// The signed-in collector's outbox, for the screens: payments recorded
-/// offline that the backend doesn't have yet.
+/// The signed-in collector's outbox, for the screens: payments on the phone
+/// that the backend doesn't have yet. Every payment starts here and is held
+/// for its 5 minutes (owner decision 2026-11-23).
 ///
 /// The background sync changes the same table from another isolate, so the
 /// list is re-read with [refresh] after every sync and when the app comes
@@ -32,7 +35,7 @@ class Outbox extends ChangeNotifier {
           if (p.isRefused) p,
       ];
 
-  /// Not refused: inside their 10 minutes, or due and waiting for a
+  /// Not refused: inside their 5 minutes, or due and waiting for a
   /// connection.
   List<OutboxPayment> get waiting => [
         for (final p in _items)
@@ -42,6 +45,14 @@ class Outbox extends ChangeNotifier {
   bool get isEmpty => _items.isEmpty;
 
   DateTime now() => _now();
+
+  /// The payment with [idempotencyKey], or null once it's been sent.
+  OutboxPayment? find(String idempotencyKey) {
+    for (final p in _items) {
+      if (p.idempotencyKey == idempotencyKey) return p;
+    }
+    return null;
+  }
 
   Future<void> refresh() async {
     final staffId = _staffId();
@@ -56,9 +67,8 @@ class Outbox extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Keeps a payment that couldn't be sent. [idempotencyKey] is the one the
-  /// confirm screen already tried with, so if that attempt did reach the
-  /// backend, the sync gets the saved payment back rather than a second one.
+  /// Keeps a newly confirmed payment for its 5 minutes. [idempotencyKey]
+  /// was made by the confirm screen and goes with every send.
   Future<OutboxPayment> add(
     PaymentDraft draft, {
     required String idempotencyKey,
@@ -73,10 +83,33 @@ class Outbox extends ChangeNotifier {
       type: draft.type,
       amount: draft.amount,
       note: draft.note,
-      recordedAt: _now().toUtc(),
+      createdAt: _now().toUtc(),
     );
     await _store.add(payment);
     await refresh();
     return payment;
+  }
+
+  /// A correction inside the 5 minutes: [account] (one of the same member's
+  /// accounts) and [amount]. Returns false when it's too late, because the
+  /// 5 minutes are up or the payment is already being sent.
+  Future<bool> correct(
+    String idempotencyKey, {
+    required MemberAccount account,
+    required Cedis amount,
+  }) async {
+    final bool changed;
+    try {
+      changed = await _store.correct(
+        idempotencyKey,
+        type: account.type,
+        accountNumber: account.accountNumber,
+        amount: amount,
+        updatedAt: _now().toUtc(),
+      );
+    } finally {
+      await refresh();
+    }
+    return changed;
   }
 }

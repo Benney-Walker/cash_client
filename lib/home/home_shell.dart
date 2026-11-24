@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../app_services.dart';
 import '../auth/auth_session.dart';
+import '../collector/correct_payment.dart';
 import '../collector/payment_flow.dart';
 import '../outbox/outbox_screen.dart';
 import '../submission/submit_day_screen.dart';
@@ -71,9 +72,15 @@ class _HomeShellState extends State<HomeShell> {
     navigator.popUntil((route) => route.isFirst);
     navigator.push(
       MaterialPageRoute<void>(
-        builder: (_) => OutboxScreen(
+        builder: (context) => OutboxScreen(
           outbox: widget.services.outbox,
           onSync: widget.services.sync.syncNow,
+          onCorrect: (payment) => openCorrection(
+            context,
+            payment: payment,
+            outbox: widget.services.outbox,
+            directory: widget.services.members,
+          ),
         ),
       ),
     );
@@ -100,12 +107,8 @@ class _HomeShellState extends State<HomeShell> {
     startPaymentFlow(
       context,
       directory: services.members,
-      api: services.collectorApi,
-      saveOffline: (draft, key) async {
-        final queued = await services.outbox.add(draft, idempotencyKey: key);
-        services.sync.paymentQueued(queued);
-        return queued;
-      },
+      outbox: services.outbox,
+      onSaved: services.sync.paymentQueued,
     );
   }
 
@@ -118,6 +121,7 @@ class _HomeShellState extends State<HomeShell> {
           outbox: services.outbox,
           dayClosure: services.dayClosure,
           syncOutbox: services.sync.syncNow,
+          sendAllNow: services.sync.sendAllNow,
         ),
       ),
     );

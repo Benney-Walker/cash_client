@@ -50,16 +50,18 @@ class CollectorApi {
   /// first request did reach the backend, it returns that payment instead
   /// of recording a second one.
   ///
-  /// [recordedAt] is set only for a payment recorded offline. The app sends
-  /// those after their 10 minutes, so the backend applies them straight
-  /// away instead of holding them as PENDING.
+  /// [createdAt] is when the collector recorded it on the phone and
+  /// [updatedAt] its last correction there (the same if never corrected).
+  /// The backend applies the payment as soon as it arrives (backend,
+  /// 23 Nov 2026): the app sends it only after its 5 minutes on the phone.
   Future<CollectorPayment> recordPayment({
     required String idempotencyKey,
     required PaymentType type,
     required String accountNumber,
     required Cedis amount,
+    required DateTime createdAt,
+    required DateTime updatedAt,
     String? description,
-    DateTime? recordedAt,
   }) async {
     final note = description?.trim();
     // The amount is written as a JSON number literal from its exact decimal
@@ -71,7 +73,8 @@ class CollectorApi {
         '"accountNumber":${jsonEncode(accountNumber)},'
         '"amount":${amount.toDecimalString()}'
         '${note == null || note.isEmpty ? '' : ',"description":${jsonEncode(note)}'}'
-        '${recordedAt == null ? '' : ',"recordedAt":${jsonEncode(backendLocalTime(recordedAt))}'}'
+        ',"createdAt":${jsonEncode(backendLocalTime(createdAt))}'
+        ',"updatedAt":${jsonEncode(backendLocalTime(updatedAt))}'
         '}';
     final response = await _send(
       () => _client.post(

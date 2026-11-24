@@ -93,11 +93,12 @@ class CollectorMember {
 /// A payment's state on the backend (`TransactionStatus`). A collector
 /// payment is PENDING during its 10-minute correction window, then
 /// COMPLETED (balance updated, member texted) or FAILED.
-/// How long a collector can correct a record after it's saved (owner
-/// decision 2026-11-07). The backend counts it for payments it saves
-/// online; the app counts it for payments recorded offline, and sends those
-/// only once it's over (backend `CollectorRules.CORRECTION_WINDOW`).
-const correctionWindow = Duration(minutes: 10);
+/// How long a new payment stays on the phone before it's sent (owner
+/// decision 2026-11-23). During it the collector can correct the amount or
+/// the account in the app; it runs from when the payment was recorded, and
+/// a correction doesn't restart it (owner decision 2026-11-24). The backend
+/// counts no window: it applies a payment as soon as it arrives.
+const holdWindow = Duration(minutes: 5);
 
 enum PaymentStatus {
   pending,
@@ -126,7 +127,7 @@ class CollectorPayment {
     required this.status,
     this.failureReason,
     this.createdAt,
-    this.correctableUntil,
+    this.receivedAt,
   });
 
   final String transactionId;
@@ -138,23 +139,12 @@ class CollectorPayment {
   final PaymentStatus status;
   final String? failureReason;
 
-  /// Server times, without a zone (the backend uses LocalDateTime).
+  /// The phone's time when the payment was recorded (it decides the
+  /// collector's day), read as UTC.
   final DateTime? createdAt;
 
-  /// When the 10-minute correction window closes; null for payments
-  /// recorded offline, which are final on arrival.
-  final DateTime? correctableUntil;
-
-  /// How long the correction window has left, measured on the server's own
-  /// clock (`correctableUntil - createdAt`), so a wrong phone clock can't
-  /// change it. Zero when there's no window.
-  Duration get correctionWindow {
-    final until = correctableUntil;
-    final created = createdAt;
-    if (until == null || created == null) return Duration.zero;
-    final window = until.difference(created);
-    return window.isNegative ? Duration.zero : window;
-  }
+  /// The server's time when it arrived.
+  final DateTime? receivedAt;
 
   static CollectorPayment? fromJson(Object? json) {
     if (json is! Map<String, dynamic>) return null;
@@ -183,7 +173,7 @@ class CollectorPayment {
       status: PaymentStatus.fromWire(json['status']),
       failureReason: reason is String ? reason : null,
       createdAt: _time(json['createdAt']),
-      correctableUntil: _time(json['correctableUntil']),
+      receivedAt: _time(json['receivedAt']),
     );
   }
 
@@ -200,8 +190,9 @@ DateTime? parseServerTime(Object? value) {
 }
 
 /// The collector's payments for a day with totals, from
-/// `GET /api/collector/v1/payments` (backend PR #14). Totals leave out
-/// FAILED payments; PENDING ones count, as the cash has been collected.
+/// `GET /api/collector/v1/payments` (backend PR #14). Payments are final on
+/// arrival (COMPLETED, or FAILED when the account was frozen meanwhile);
+/// totals leave out FAILED ones.
 @immutable
 class CollectorDaySummary {
   const CollectorDaySummary({
@@ -219,16 +210,6 @@ class CollectorDaySummary {
 
   /// Newest first.
   final List<CollectorPayment> payments;
-
-  /// Payments still inside their 10-minute correction window at [now].
-  /// The backend refuses a submission until there are none.
-  List<CollectorPayment> inWindow(DateTime now) => [
-        for (final p in payments)
-          if (p.status == PaymentStatus.pending &&
-              p.correctableUntil != null &&
-              p.correctableUntil!.isAfter(now))
-            p,
-      ];
 
   static CollectorDaySummary? fromJson(Object? json) {
     if (json is! Map<String, dynamic>) return null;

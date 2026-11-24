@@ -1,5 +1,6 @@
 import 'package:cash_client/outbox/outbox.dart';
 import 'package:cash_client/outbox/outbox_screen.dart';
+import 'package:cash_client/outbox/outbox_store.dart';
 import 'package:cash_client/sync/payment_sync.dart';
 import 'package:cash_client/theme/app_theme.dart';
 import 'package:flutter/material.dart';
@@ -14,6 +15,7 @@ void main() {
     WidgetTester tester,
     MemoryOutboxStore store, {
     Future<SyncReport> Function()? onSync,
+    void Function(OutboxPayment payment)? onCorrect,
   }) async {
     final outbox =
         Outbox(store: store, staffId: () => 'STF001', now: () => now);
@@ -22,6 +24,7 @@ void main() {
       home: OutboxScreen(
         outbox: outbox,
         onSync: onSync ?? () async => SyncReport.nothing,
+        onCorrect: onCorrect,
       ),
     ));
     await tester.pump();
@@ -34,11 +37,11 @@ void main() {
       queuedPayment(
         key: 'w',
         memberName: 'Yaw Boateng',
-        recordedAt: now.subtract(const Duration(minutes: 4)),
+        createdAt: now.subtract(const Duration(minutes: 2)),
       ),
       queuedPayment(
         key: 'r',
-        recordedAt: now.subtract(const Duration(minutes: 30)),
+        createdAt: now.subtract(const Duration(minutes: 30)),
         refusalReason: "This member's first deposit must be made at the office",
       ),
     ]);
@@ -49,9 +52,9 @@ void main() {
       find.text("This member's first deposit must be made at the office"),
       findsOneWidget,
     );
-    expect(find.text('Waiting to send (1)'), findsOneWidget);
-    // Recorded 4 minutes ago: 6 minutes left.
-    expect(find.text('Waiting · 6:00'), findsOneWidget);
+    expect(find.text('On this phone (1)'), findsOneWidget);
+    // Recorded 2 minutes ago: 3 minutes left to correct.
+    expect(find.text('Can correct · 3:00'), findsOneWidget);
     expect(
       tester.getTopLeft(find.byKey(const Key('outbox.refused.0'))).dy,
       lessThan(tester.getTopLeft(find.byKey(const Key('outbox.waiting.0'))).dy),
@@ -60,19 +63,48 @@ void main() {
 
   testWidgets('a due payment waits for a connection', (tester) async {
     final store = MemoryOutboxStore([
-      queuedPayment(recordedAt: now.subtract(const Duration(minutes: 12))),
+      queuedPayment(createdAt: now.subtract(const Duration(minutes: 12))),
     ]);
-    await pumpOutbox(tester, store);
+    await pumpOutbox(tester, store, onCorrect: (_) {});
 
     expect(find.text('Sends when online'), findsOneWidget);
-    // Try again belongs to refused payments only.
+    // Try again belongs to refused payments only, and the 5 minutes to
+    // correct are over.
     expect(find.byKey(const Key('outbox.tryAgain')), findsNothing);
+    expect(find.byKey(const Key('outbox.correct.0')), findsNothing);
+  });
+
+  testWidgets('a payment in its 5 minutes can be corrected from here',
+      (tester) async {
+    final store = MemoryOutboxStore([
+      queuedPayment(createdAt: now.subtract(const Duration(minutes: 1))),
+    ]);
+    OutboxPayment? corrected;
+    await pumpOutbox(tester, store, onCorrect: (p) => corrected = p);
+
+    await tester.tap(find.byKey(const Key('outbox.correct.0')));
+
+    expect(corrected?.idempotencyKey, 'key-1');
+  });
+
+  testWidgets('a refused payment has no Correct, only Try again',
+      (tester) async {
+    final store = MemoryOutboxStore([
+      queuedPayment(
+        createdAt: now.subtract(const Duration(minutes: 1)),
+        refusalReason: 'Account 1002345678 is not active',
+      ),
+    ]);
+    await pumpOutbox(tester, store, onCorrect: (_) {});
+
+    expect(find.text('Correct'), findsNothing);
+    expect(find.byKey(const Key('outbox.tryAgain')), findsOneWidget);
   });
 
   testWidgets('Try again runs a sync and says what happened', (tester) async {
     final store = MemoryOutboxStore([
       queuedPayment(
-        recordedAt: now.subtract(const Duration(minutes: 30)),
+        createdAt: now.subtract(const Duration(minutes: 30)),
         refusalReason: 'Account 1002345678 is not active',
       ),
     ]);
