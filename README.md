@@ -19,7 +19,7 @@ The app is a client of the `bankingbackend` Spring Boot API. It holds no busines
 | Savings deposits and share purchases | Done: held 5 minutes on the phone, then sent; sync in the background and the Outbox (backend, 23 Nov 2026) |
 | Corrections within the 5 minutes | Done in the app (design C1): amount and account; no cancelling |
 | Withdrawal requests | Removed (owner decision, 15 Nov 2026). Members withdraw at a branch office |
-| Location tracking | Not started. The backend now refuses a payment without a location point within 15 minutes of it (D34), so payments are refused until this is built |
+| Location tracking | Done (designs L1 and H-B, 24 Nov 2026): a point every 5 minutes while signed in, even with the app closed, and one with each payment; sent before payments (backend D34) |
 | Transaction history | Screen in place, empty. Backend day summary in PR #14 |
 | Daily cash submission and session ending | Done (backend PR #14, decision D35). No rejection step: the approver records the cash counted |
 
@@ -27,7 +27,8 @@ The app is a client of the `bankingbackend` Spring Boot API. It holds no busines
 
 - Flutter SDK with Dart `^3.12.0` (see `pubspec.yaml`)
 - Android SDK for device builds. Android package: `com.bynexlabs.cash_client`. Minimum Android 7.0 (API 24), required by `shared_preferences` (`flutter_secure_storage` needs 6.0)
-- The database (`cash_client.db`) is at version 4: member list (1), outbox (2), shared locks (3), outbox correction times (4)
+- The database (`cash_client.db`) is at version 5: member list (1), outbox (2), shared locks (3), outbox correction times (4), location points (5)
+- Location: `geolocator` and `battery_plus`. The app asks for location "while using the app" only; a foreground service (with its notification) keeps the readings going while the app is closed. Google Play asks apps that use location in a foreground service to fill in a declaration and show a prominent disclosure (the L1 screen) before asking
 - Android builds use core library desugaring (`android/app/build.gradle.kts`), which `flutter_local_notifications` needs
 - A running `bankingbackend` with backend PR #14 at `0a3a68b` or later (23 Nov 2026): device ID at sign-in, payments final on arrival with `createdAt`/`updatedAt`, rotating refresh tokens, logout and the daily submission. Older backends don't accept what this app sends
 
@@ -91,6 +92,8 @@ Home (`lib/home/home_screen.dart`) keeps design A's layout, restyled as design H
 - On the plain page below: **Record deposit** (the screen's one gradient button) full width, with **Submit today's collections** beneath it. Design A had a **Withdrawal** button beside Record deposit; it was removed with collector withdrawal requests (owner decision, 15 Nov 2026).
 - **Recent** records, with **See all** opening the History tab.
 
+While location is off or not allowed, **Record deposit** becomes **Turn on location to record**, with "Location is off. Payments can't be recorded." beneath it (design H-B, 24 Nov 2026; see Location tracking).
+
 **Record deposit** opens the payment flow (below), and **Submit today's collections** the Submit today screen (see Submitting the day). Once the day is submitted, Record deposit says no more payments can be recorded until it's approved, with a View link back to the submission. Today's total and the recent list on home aren't connected yet: they show GH₵ 0.00 and "No collections recorded today".
 
 History (`lib/home/history_screen.dart`), design Y1, "wash header" (12 Nov 2026):
@@ -107,7 +110,7 @@ Design P1, "two screens" (15 Nov 2026), in `lib/collector/`. Collectors record t
 
 1. **Choose member** (`member_picker_screen.dart`). The branch member list from `GET /api/collector/v1/members`: names and savings/shares account numbers only, never other member details. Search by name or account number. When two members share a name, their account numbers show so they can be told apart.
 2. **Record payment** (`record_payment_screen.dart`). Savings or Shares (only the types the member has an account for), the account number, the amount in GH₵ and an optional note (up to 500 characters). Amounts are cedis and pesewas, 2 decimal places (owner decision, 15 Nov 2026), up to GH₵ 999,999,999.99.
-3. **Confirm payment** (`confirm_payment_screen.dart`). Member, account and amount are checked before the payment is kept; only this screen records it. Edit goes back.
+3. **Confirm payment** (`confirm_payment_screen.dart`). Member, account and amount are checked before the payment is kept; only this screen records it. Edit goes back. **Record payment** first takes the payment's location point (see Location tracking); if there's no location to be had, the payment isn't saved and the screen says why.
 4. **Saved on this phone** (`payment_saved_screen.dart`), design C1 (24 Nov 2026). Every payment is held on the phone for **5 minutes** (owner decision, 23 Nov 2026), shown as "Can correct · 4:12". **Correct** reopens the Record payment form filled in, titled "Correct payment", where the collector changes the amount or moves it to the member's other account (savings or shares). The note can't change, the 5 minutes don't restart, and there's no cancelling (owner decisions, 24 Nov 2026). After the 5 minutes it's sent once there's a connection; when the server has it, the chip says **Sent**. Done (or back) goes home, never to the confirm screen.
 
 Corrections (`correct_payment.dart`): the member's accounts come from the branch list saved on the phone (if the member isn't in it any more, only the amount can change). A correction made too late, because the 5 minutes ran out or the payment is already being sent, is refused on the phone with "The 5 minutes are up, so this payment can't be changed. It's sent as it was." The backend has no correction endpoint any more: what arrives is final.
@@ -148,10 +151,11 @@ On the phone:
 - Every confirmed payment is saved in the `outbox` table of `cash_client.db` with the phone's `createdAt` (in UTC), its `updatedAt` and its idempotency key, and held for its 5 minutes (see Recording a payment). Online or not makes no difference to that.
 - After the 5 minutes it's sent with `createdAt` and `updatedAt`; without a connection it waits longer. The backend accepts phone times up to 5 minutes ahead of its clock.
 - Times go to the backend as Accra time, which is UTC all year.
-- The database is at version 4: version 4 added `updated_at` to the outbox.
+- The database is at version 5: version 4 added `updated_at` to the outbox, version 5 the `location_points` table.
 
 Sync (`payment_sync.dart`):
 
+- The phone's location points go first (`lib/location/location_sync.dart`), because the backend refuses a payment without a point within 15 minutes of it. If they don't all get through, no payment is sent that time, so none is refused for a point still on the phone.
 - Each payment is sent on its own. A refusal (400, 403, 404, 409 or another 4xx) never stops the others: the payment stays in the outbox with the backend's reason, and the collector gets one phone notification ("Payment refused … Report it to your admin").
 - Refused payments are tried again automatically on every sync (owner decision, 15 Nov 2026), without notifying again. Once the office fixes the cause, the next sync sends it.
 - No connection, a timeout, a 5xx or an ended session isn't a refusal: the payment just waits for the next sync, with no notification. No connection or an ended session stops the sync; a 5xx on one payment doesn't stop the rest.
@@ -172,7 +176,22 @@ The Outbox (`outbox_screen.dart`), design R2 (15 Nov 2026):
 - Then the payments on the phone: "Can correct · 4:12" with **Correct** during their 5 minutes, or "Sends when online" after.
 - Tapping a refused-payment notification opens the Outbox. The notification permission (Android 13+) is asked for when the first payment is saved.
 
-Until location tracking is built, the backend refuses every payment ("No location was recorded within 15 minutes of this payment…", D34), so payments land in the refused list. The outbox SQLite code, WorkManager and notifications aren't covered by tests; the sync rules, the screens and the flow are, with in-memory stand-ins.
+The outbox SQLite code, WorkManager and notifications aren't covered by tests; the sync rules, the screens and the flow are, with in-memory stand-ins.
+
+## Location tracking
+
+Backend D34 (23 Nov 2026) and owner decisions of 24 Nov 2026, in `lib/location/`.
+
+- **What's recorded**: a point every 5 minutes while a collector is signed in and their day isn't submitted, and one with each payment, carrying the payment's idempotency key. Each point has latitude, longitude, the phone's accuracy in metres, the battery level and the phone's time (`location_tracker.dart`).
+- **With the app closed**: tracking keeps going through a foreground service with a notification that stays showing, "Penco Collector · Recording your location while you collect" (owner decision). It stops at sign-out, when the session ends (approval ends it) and when the day is submitted.
+- **Before Android's prompt**: the disclosure screen, design L1 (`location_disclosure_screen.dart`), says what's recorded, that the branch sees it with the payments, that the battery level goes with it, when it stops and that a notification shows. **Turn on location** shows Android's prompt; **Sign out** is the other way out. If the collector says no, the screen stays and says payments can't be recorded without it; if they said no for good, the button becomes **Open settings**. The screen isn't shown once the day is submitted.
+- **No recording without location** (owner decision): while location is off or not allowed, home shows **Turn on location to record** (design H-B), which shows Android's prompt, the app's settings or the phone's location switch, whichever is needed. The app notices when the collector comes back.
+- **The payment's point**: Record payment takes a fresh reading, waiting up to 20 seconds. Indoors, where there may be none, a point from the last 10 minutes is enough (owner decision); otherwise the payment isn't saved: "Can't find your location. Step outside and try again."
+- **Sending** (`location_sync.dart`): `POST /api/collector/v1/locations` with up to 500 points a call, oldest first, before any payment, on every sync, and straight after each 5-minute point when online. Offline points wait on the phone (`location_points` table) and go with the next sync, in the app or the background one. The backend stores a point sent twice only once. A point it rejects as invalid (400, such as a phone time in the future) is dropped so it can't block the rest; any other refusal keeps them all. Sent points are kept a day, only so the app knows when it last had a location.
+- Points belong to the collector who was signed in, and like payments they're kept through a sign-out until that collector signs in again.
+- The office sees each collector's trail for a day with the payments on it (backend, administrators and the branch's agents); the backend keeps points 90 days.
+
+The geolocator and battery code isn't covered by tests (it needs a phone); the tracking rules, the sync, the screens and the flow are, with stand-ins.
 
 ## Settings
 

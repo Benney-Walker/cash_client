@@ -8,14 +8,16 @@ import '../auth/session_manager.dart';
 import '../auth/session_store.dart';
 import '../collector/collector_api.dart';
 import '../config/app_config.dart';
+import '../location/location_store.dart';
+import '../location/location_sync.dart';
 import '../outbox/outbox_store.dart';
 import '../storage/app_database.dart';
 import 'payment_sync.dart';
 import 'sync_platform.dart';
 import 'sync_scheduler.dart';
 
-/// Entry point for Android's WorkManager: syncs the outbox while the app is
-/// closed (owner decision 2026-11-15).
+/// Entry point for Android's WorkManager: syncs the outbox and the location
+/// points while the app is closed (owner decision 2026-11-15).
 ///
 /// It runs in its own isolate with nothing from the app set up, so it reads
 /// the stored session and opens the database itself. When WorkManager runs
@@ -54,14 +56,17 @@ Future<void> runBackgroundSync() async {
 
   final client = http.Client();
   try {
+    final api = CollectorApi(
+      baseUrl: AppConfig.apiBaseUrl,
+      client: AuthenticatedClient(client, sessions),
+    );
     final sync = PaymentSync(
       store: SqliteOutboxStore(database),
-      api: CollectorApi(
-        baseUrl: AppConfig.apiBaseUrl,
-        client: AuthenticatedClient(client, sessions),
-      ),
+      api: api,
       staffId: () => sessions.session?.staffId,
       notifier: await LocalAppNotifications.create(),
+      // Points taken while the app was open but offline go first.
+      locations: LocationSync(store: SqliteLocationStore(database), api: api),
     );
     await sync.run();
   } finally {

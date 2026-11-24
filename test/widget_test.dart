@@ -1,6 +1,8 @@
 import 'package:cash_client/app_services.dart';
 import 'package:cash_client/auth/session_manager.dart';
 import 'package:cash_client/home/home_shell.dart';
+import 'package:cash_client/location/location_platform.dart';
+import 'package:cash_client/location/location_point.dart';
 import 'package:cash_client/main.dart';
 import 'package:cash_client/settings/theme_controller.dart';
 import 'package:cash_client/theme/app_status_colors.dart';
@@ -15,6 +17,8 @@ void main() {
   late ThemeController theme;
   late MemoryMemberCache memberCache;
   late MemoryOutboxStore outboxStore;
+  late MemoryLocationStore locationStore;
+  late FakeLocationPlatform location;
   late AppServices services;
 
   Future<void> pumpApp(
@@ -24,9 +28,12 @@ void main() {
     ThemeMode? savedTheme,
     FakeCollectorBackend? collector,
     MemoryOutboxStore? outbox,
+    FakeLocationPlatform? locationPlatform,
   }) async {
     memberCache = MemoryMemberCache();
     outboxStore = outbox ?? MemoryOutboxStore();
+    locationStore = MemoryLocationStore();
+    location = locationPlatform ?? FakeLocationPlatform();
     sessions = SessionManager(
       deviceIds: const FakeDeviceId(),
       
@@ -38,6 +45,8 @@ void main() {
       cache: memberCache,
       outboxStore: outboxStore,
       staffId: () => sessions.session?.staffId,
+      locationPlatform: location,
+      locationStore: locationStore,
     );
     theme = ThemeController(MemoryThemeModeStore(savedTheme));
     await theme.load();
@@ -239,7 +248,7 @@ void main() {
   });
 
   group('offline payments', () {
-    // A payment recorded a minute ago: inside its 10 minutes for the rest of
+    // A payment recorded a minute ago: inside its 5 minutes for the rest of
     // the test, so the sync leaves it alone.
     MemoryOutboxStore oneWaiting() => MemoryOutboxStore([
           queuedPayment(
@@ -355,6 +364,145 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(services.dayClosure.isClosed, isFalse);
+    });
+  });
+
+  group('location (D34)', () {
+    Future<void> recordFifty(WidgetTester tester) async {
+      await tapKey(tester, 'home.recordDeposit');
+      await tester.tap(find.text('Ama Owusu'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const Key('record.amount')), '50');
+      await tapKey(tester, 'record.continue');
+      await tester.tap(find.byKey(const Key('confirm.record')));
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+    }
+
+    testWidgets('not allowed yet: the disclosure comes first, then home',
+        (tester) async {
+      await pumpApp(
+        tester,
+        store: MemorySessionStore(collectorSession),
+        locationPlatform: FakeLocationPlatform(
+          accessNow: LocationAccess.denied,
+          afterRequest: LocationAccess.ready,
+        ),
+      );
+      expect(find.text('Location while you collect'), findsOneWidget);
+      expect(find.byKey(const Key('home.staffName')), findsNothing);
+
+      await tapKey(tester, 'location.turnOn');
+
+      expect(location.requests, 1);
+      expect(find.byKey(const Key('home.recordDeposit')), findsOneWidget);
+      expect(services.location.isTracking, isTrue);
+    });
+
+    testWidgets('said no: the screen stays and says why; Sign out works',
+        (tester) async {
+      final store = MemorySessionStore(collectorSession);
+      await pumpApp(
+        tester,
+        store: store,
+        locationPlatform: FakeLocationPlatform(
+          accessNow: LocationAccess.denied,
+        ),
+      );
+
+      await tapKey(tester, 'location.turnOn');
+      expect(find.byKey(const Key('location.notice')), findsOneWidget);
+
+      await tapKey(tester, 'location.signOut');
+      expect(store.session, isNull);
+      expect(find.byKey(const Key('login.submit')), findsOneWidget);
+    });
+
+    testWidgets('said no for good: the button opens Settings',
+        (tester) async {
+      await pumpApp(
+        tester,
+        store: MemorySessionStore(collectorSession),
+        locationPlatform: FakeLocationPlatform(
+          accessNow: LocationAccess.deniedForever,
+        ),
+      );
+      expect(find.text('Open settings'), findsOneWidget);
+
+      await tapKey(tester, 'location.turnOn');
+
+      expect(location.appSettingsOpened, 1);
+    });
+
+    testWidgets('switched off: home asks to turn it on instead of recording',
+        (tester) async {
+      await pumpApp(
+        tester,
+        store: MemorySessionStore(collectorSession),
+        locationPlatform: FakeLocationPlatform(
+          accessNow: LocationAccess.serviceOff,
+        ),
+      );
+      expect(find.byKey(const Key('home.recordDeposit')), findsNothing);
+
+      await tapKey(tester, 'home.turnOnLocation');
+      expect(location.locationSettingsOpened, 1);
+
+      // Back from Settings with location on.
+      location.accessNow = LocationAccess.ready;
+      location.service.add(true);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('home.recordDeposit')), findsOneWidget);
+    });
+
+    testWidgets('a payment gets its own point, under its key', (tester) async {
+      await pumpApp(tester, store: MemorySessionStore(collectorSession));
+
+      await recordFifty(tester);
+
+      expect(find.text('Saved on this phone'), findsOneWidget);
+      final point = locationStore.points.single;
+      expect(point.trigger, LocationTrigger.payment);
+      expect(point.paymentKey, outboxStore.all.single.idempotencyKey);
+    });
+
+    testWidgets('no location to be had: the payment is not saved',
+        (tester) async {
+      await pumpApp(
+        tester,
+        store: MemorySessionStore(collectorSession),
+        locationPlatform: FakeLocationPlatform()..fix = null,
+      );
+
+      await recordFifty(tester);
+
+      expect(
+        find.text("Can't find your location. Step outside and try again."),
+        findsOneWidget,
+      );
+      expect(outboxStore.all, isEmpty);
+    });
+
+    testWidgets('tracking runs while signed in and stops on submitting',
+        (tester) async {
+      await pumpApp(tester, store: MemorySessionStore(collectorSession));
+      expect(services.location.isTracking, isTrue);
+
+      await tapKey(tester, 'home.submitDay');
+      await tapKey(tester, 'submit.button');
+      await tapKey(tester, 'submit.confirm');
+
+      expect(services.dayClosure.isClosed, isTrue);
+      expect(services.location.isTracking, isFalse);
+    });
+
+    testWidgets('signing out stops tracking', (tester) async {
+      await pumpApp(tester, store: MemorySessionStore(collectorSession));
+
+      await sessions.signOut();
+      await tester.pumpAndSettle();
+
+      expect(services.location.isTracking, isFalse);
     });
   });
 }

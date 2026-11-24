@@ -13,6 +13,11 @@ import 'record_payment_screen.dart';
 /// amount → confirm → saved on the phone, held 5 minutes for corrections
 /// (design C1), then sent.
 ///
+/// [beforeSave] runs with the payment's idempotency key when the collector
+/// taps Record payment, before it's saved: the app takes the payment's
+/// location point there (D34). If it throws, the payment isn't saved and
+/// the confirm screen shows why (`LocationUnavailable`'s message).
+///
 /// [onSaved] runs once a payment is in the outbox, so the sync can arrange
 /// to send it when its 5 minutes are up.
 ///
@@ -22,6 +27,7 @@ void startPaymentFlow(
   BuildContext context, {
   required MemberDirectory directory,
   required Outbox outbox,
+  Future<void> Function(String idempotencyKey)? beforeSave,
   void Function(OutboxPayment payment)? onSaved,
 }) {
   final navigator = Navigator.of(context);
@@ -29,6 +35,7 @@ void startPaymentFlow(
   void goHome() => navigator.popUntil((route) => route.isFirst);
 
   Future<OutboxPayment> save(PaymentDraft draft, String key) async {
+    await beforeSave?.call(key);
     final saved = await outbox.add(draft, idempotencyKey: key);
     onSaved?.call(saved);
     return saved;

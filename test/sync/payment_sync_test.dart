@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:cash_client/collector/collector_models.dart';
 import 'package:cash_client/common/money.dart';
+import 'package:cash_client/location/location_point.dart';
+import 'package:cash_client/location/location_sync.dart';
 import 'package:cash_client/sync/payment_sync.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -268,5 +270,66 @@ void main() {
         reason: key,
       );
     }
+  });
+
+  group('location points (D34)', () {
+    late MemoryLocationStore points;
+
+    setUp(() async {
+      points = MemoryLocationStore();
+      await points.add(
+        'STF001',
+        LocationPoint(
+          latitude: 5.6,
+          longitude: -0.18,
+          accuracyMeters: 10,
+          trigger: LocationTrigger.payment,
+          paymentKey: 'a',
+          recordedAt: due,
+        ),
+      );
+    });
+
+    PaymentSync withPoints(FakeCollectorBackend backend) => PaymentSync(
+          store: store,
+          api: backend.api,
+          staffId: () => 'STF001',
+          notifier: notifications,
+          locations:
+              LocationSync(store: points, api: backend.api, now: () => now),
+          now: () => now,
+        );
+
+    test('go before the payments', () async {
+      await store.add(queuedPayment(key: 'a', createdAt: due));
+      final backend = FakeCollectorBackend.working();
+
+      final report = await withPoints(backend).run();
+
+      expect(report.sent, 1);
+      expect(
+        backend.requests.map((r) => r.url.path.split('/').last),
+        ['locations', 'payments'],
+      );
+      expect(await points.unsent('STF001'), isEmpty);
+    });
+
+    test("if they don't get through, no payment is sent (or refused)",
+        () async {
+      await store.add(queuedPayment(key: 'a', createdAt: due));
+      final backend = FakeCollectorBackend((request) {
+        if (request.url.path.endsWith('/locations')) {
+          return http.Response(errorBody(500, 'Server error'), 500);
+        }
+        return http.Response(paymentBody(idempotencyKey: keyOf(request)), 200);
+      });
+
+      final report = await withPoints(backend).run();
+
+      expect(report.offline, isTrue);
+      expect(backend.paymentRequests, isEmpty);
+      expect(store.all.single.isRefused, isFalse);
+      expect(notifications.shown, isEmpty);
+    });
   });
 }

@@ -12,6 +12,7 @@ void main() {
   late int recordTaps;
   late int outboxTaps;
   late int submitTaps;
+  late int locationTaps;
 
   Future<void> pumpHome(
     WidgetTester tester, {
@@ -19,7 +20,9 @@ void main() {
     DateTime? now,
     int outboxWaiting = 0,
     int outboxRefused = 0,
+    bool locationOff = false,
   }) async {
+    locationTaps = 0;
     seeAllTaps = 0;
     recordTaps = 0;
     outboxTaps = 0;
@@ -35,6 +38,8 @@ void main() {
           outboxWaiting: outboxWaiting,
           outboxRefused: outboxRefused,
           onOpenOutbox: () => outboxTaps++,
+          locationOff: locationOff,
+          onTurnOnLocation: () => locationTaps++,
           now: () => now ?? DateTime(2026, 11, 10, 9),
         ),
       ),
@@ -196,6 +201,36 @@ void main() {
         lessThan(
             tester.getTopLeft(find.byKey(const Key('home.recordDeposit'))).dy),
       );
+    });
+  });
+
+  group('location off (design H-B)', () {
+    testWidgets('Record deposit becomes Turn on location to record',
+        (tester) async {
+      await pumpHome(tester, locationOff: true);
+
+      expect(find.byKey(const Key('home.recordDeposit')), findsNothing);
+      expect(find.text('Turn on location to record'), findsOneWidget);
+      expect(find.text("Location is off. Payments can't be recorded."),
+          findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('home.turnOnLocation')));
+      expect(locationTaps, 1);
+      expect(recordTaps, 0);
+    });
+
+    testWidgets('with location on, Record deposit is back', (tester) async {
+      await pumpHome(tester);
+
+      expect(find.byKey(const Key('home.recordDeposit')), findsOneWidget);
+      expect(find.byKey(const Key('home.locationOff')), findsNothing);
+    });
+
+    testWidgets('fits a small phone', (tester) async {
+      useSmallPhone(tester);
+      await pumpHome(tester, locationOff: true, outboxRefused: 1);
+
+      expect(tester.takeException(), isNull);
     });
   });
 }

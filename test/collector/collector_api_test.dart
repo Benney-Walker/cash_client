@@ -6,6 +6,7 @@ import 'package:cash_client/collector/collector_api.dart';
 import 'package:cash_client/collector/collector_models.dart';
 import 'package:cash_client/collector/idempotency.dart';
 import 'package:cash_client/common/money.dart';
+import 'package:cash_client/location/location_point.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -199,6 +200,48 @@ void main() {
     expect(body['createdAt'], '2026-11-15T09:05:07');
     expect(body['updatedAt'], '2026-11-15T09:08:00');
     expect(body.containsKey('recordedAt'), isFalse);
+  });
+
+  group('sendLocations', () {
+    final point = LocationPoint(
+      latitude: 5.6037,
+      longitude: -0.187,
+      accuracyMeters: 12.5,
+      trigger: LocationTrigger.every5Min,
+      recordedAt: created,
+    );
+
+    test('posts the points and reads what was stored', () async {
+      final backend = FakeCollectorBackend(
+        (_) => http.Response('{"stored":0,"duplicates":1}', 200),
+      );
+
+      final result = await backend.api.sendLocations([point]);
+
+      final request = backend.requests.single;
+      expect(request.url.toString(), '$testBaseUrl/api/collector/v1/locations');
+      expect(jsonDecode(request.body), {
+        'points': [
+          {
+            'latitude': 5.6037,
+            'longitude': -0.187,
+            'accuracyMeters': 12.5,
+            'trigger': 'EVERY_5_MIN',
+            'recordedAt': '2026-11-15T10:00:00',
+          },
+        ],
+      });
+      expect(result.stored, 0);
+      expect(result.duplicates, 1);
+    });
+
+    test('an answer without the counts is an unexpected response', () {
+      final backend = FakeCollectorBackend((_) => http.Response('{}', 200));
+      expect(
+        backend.api.sendLocations([point]),
+        failsWith(ApiFailure.unexpectedResponse),
+      );
+    });
   });
 
   test('backend time is Accra time, which is UTC', () {

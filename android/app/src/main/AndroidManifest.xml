@@ -5,6 +5,18 @@
     <!-- Android 13+: tells the collector when the server refuses a payment
          that was saved offline. Asked for when the first one is saved. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- Location (backend D34, owner decisions 2026-11-23/24): a point every
+         5 minutes while the collector is signed in, and one with each
+         payment. Asked for "while using the app" only; the foreground
+         service (geolocator's, with its notification) keeps the readings
+         going when the app is closed. FOREGROUND_SERVICE_LOCATION is
+         declared here because geolocator_android 5.1.1+1 stopped declaring
+         it itself. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION"/>
+    <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <!-- allowBackup is off so the stored sign-in tokens never leave the
          device in a backup. A restored copy also can't be decrypted on
          another phone, which flutter_secure_storage reports as an error. -->

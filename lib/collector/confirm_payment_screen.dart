@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../common/gradient_button.dart';
+import '../location/location_tracker.dart';
 import '../outbox/outbox_store.dart';
 import '../theme/app_gradients.dart';
 import '../theme/app_status_colors.dart';
@@ -13,7 +14,9 @@ import 'record_payment_screen.dart';
 /// make, so the payment is only recorded from here. It's saved on the phone
 /// and held for 5 minutes, when it can still be corrected, then sent (owner
 /// decision 2026-11-23); the backend's answer, including any refusal, comes
-/// then, through the Outbox.
+/// then, through the Outbox. Recording also takes the payment's location
+/// point, which can take up to 20 seconds; without a location the payment
+/// isn't saved and the reason shows here.
 class ConfirmPaymentScreen extends StatefulWidget {
   const ConfirmPaymentScreen({
     super.key,
@@ -52,12 +55,15 @@ class _ConfirmPaymentScreenState extends State<ConfirmPaymentScreen> {
       final saved = await widget.save(widget.draft, _idempotencyKey);
       if (!mounted) return;
       widget.onSaved(context, saved);
-    } catch (_) {
+    } catch (error) {
       if (!mounted) return;
       setState(() {
         _saving = false;
-        _error = "The payment couldn't be saved on this phone. Tap Record "
-            "payment to try again. It won't be recorded twice.";
+        // No location: nothing was saved, and the message says what to do.
+        _error = error is LocationUnavailable
+            ? error.message
+            : "The payment couldn't be saved on this phone. Tap Record "
+                "payment to try again. It won't be recorded twice.";
       });
     }
   }

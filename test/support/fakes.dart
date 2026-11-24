@@ -11,6 +11,11 @@ import 'package:cash_client/collector/collector_models.dart';
 import 'package:cash_client/collector/member_cache.dart';
 import 'package:cash_client/collector/member_directory.dart';
 import 'package:cash_client/common/money.dart';
+import 'package:cash_client/location/location_platform.dart';
+import 'package:cash_client/location/location_point.dart';
+import 'package:cash_client/location/location_store.dart';
+import 'package:cash_client/location/location_sync.dart';
+import 'package:cash_client/location/location_tracker.dart';
 import 'package:cash_client/outbox/outbox.dart';
 import 'package:cash_client/outbox/outbox_store.dart';
 import 'package:cash_client/settings/app_info.dart';
@@ -366,6 +371,17 @@ class FakeCollectorBackend {
             request.url.path.endsWith('/collector/v1/payments')) {
           return http.Response(daySummaryBody(), 200);
         }
+        if (request.method == 'POST' &&
+            request.url.path.endsWith('/collector/v1/locations')) {
+          final body = jsonDecode(request.body) as Map<String, dynamic>;
+          return http.Response(
+            jsonEncode({
+              'stored': (body['points'] as List).length,
+              'duplicates': 0,
+            }),
+            200,
+          );
+        }
         if (request.url.path.endsWith('/collector/v1/submissions')) {
           return request.method == 'POST'
               ? http.Response(jsonEncode(submissionJson()), 200)
@@ -379,6 +395,14 @@ class FakeCollectorBackend {
         for (final r in requests)
           if (r.method == 'POST' &&
               r.url.path.endsWith('/collector/v1/payments'))
+            r,
+      ];
+
+  /// Location batches sent (`POST /api/collector/v1/locations`).
+  List<http.Request> get locationRequests => [
+        for (final r in requests)
+          if (r.method == 'POST' &&
+              r.url.path.endsWith('/collector/v1/locations'))
             r,
       ];
 
@@ -605,8 +629,11 @@ AppServices testServices({
   String? Function()? staffId,
   DateTime Function()? now,
   MemorySubmittedDayStore? dayStore,
+  FakeLocationPlatform? locationPlatform,
+  MemoryLocationStore? locationStore,
 }) {
   final collector = backend ?? FakeCollectorBackend.working();
+  final points = locationStore ?? MemoryLocationStore();
   final store = outboxStore ?? MemoryOutboxStore();
   final who = staffId ?? () => collectorSession.staffId;
   final notify = notifications ?? FakeNotifications();
@@ -625,6 +652,7 @@ AppServices testServices({
         api: collector.api,
         staffId: who,
         notifier: notify,
+        locations: LocationSync(store: points, api: collector.api, now: now),
         now: now,
       ),
       outbox: outbox,
@@ -636,5 +664,159 @@ AppServices testServices({
       store: dayStore ?? MemorySubmittedDayStore(),
       staffId: who,
     ),
+    location: LocationTracker(
+      platform: locationPlatform ?? FakeLocationPlatform(),
+      store: points,
+      staffId: who,
+      now: now,
+    ),
   );
+}
+
+/// In-memory [LocationStore] for tests.
+class MemoryLocationStore implements LocationStore {
+  final rows = <({String staffId, LocationPoint point, DateTime? sentAt})>[];
+  int _nextId = 1;
+
+  /// Makes [add] fail, as a full disk would.
+  bool failAdds = false;
+
+  List<LocationPoint> get points => [for (final r in rows) r.point];
+
+  @override
+  Future<void> add(String staffId, LocationPoint point) async {
+    if (failAdds) throw StateError('disk full');
+    rows.add((
+      staffId: staffId,
+      point: LocationPoint(
+        id: _nextId++,
+        latitude: point.latitude,
+        longitude: point.longitude,
+        accuracyMeters: point.accuracyMeters,
+        batteryPercent: point.batteryPercent,
+        trigger: point.trigger,
+        paymentKey: point.paymentKey,
+        recordedAt: point.recordedAt,
+      ),
+      sentAt: null,
+    ));
+  }
+
+  @override
+  Future<List<LocationPoint>> unsent(String staffId, {int limit = 500}) async {
+    final unsent = [
+      for (final r in rows)
+        if (r.staffId == staffId && r.sentAt == null) r.point,
+    ]..sort((a, b) => a.recordedAt.compareTo(b.recordedAt));
+    return unsent.take(limit).toList();
+  }
+
+  @override
+  Future<void> markSent(List<int> ids, DateTime at) async {
+    for (var i = 0; i < rows.length; i++) {
+      final r = rows[i];
+      if (ids.contains(r.point.id)) {
+        rows[i] = (staffId: r.staffId, point: r.point, sentAt: at);
+      }
+    }
+  }
+
+  @override
+  Future<void> remove(List<int> ids) async {
+    rows.removeWhere((r) => ids.contains(r.point.id));
+  }
+
+  @override
+  Future<DateTime?> latestRecordedAt(String staffId) async {
+    DateTime? latest;
+    for (final r in rows) {
+      if (r.staffId != staffId) continue;
+      if (latest == null || r.point.recordedAt.isAfter(latest)) {
+        latest = r.point.recordedAt;
+      }
+    }
+    return latest;
+  }
+
+  @override
+  Future<void> pruneSent(DateTime before) async {
+    rows.removeWhere((r) => r.sentAt != null && r.sentAt!.isBefore(before));
+  }
+}
+
+/// A scripted [LocationPlatform]: location allowed and on by default, with a
+/// fix in Accra.
+class FakeLocationPlatform implements LocationPlatform {
+  FakeLocationPlatform({
+    this.accessNow = LocationAccess.ready,
+    this.afterRequest,
+    this.fix = accraFix,
+    this.battery = 80,
+  });
+
+  static const accraFix =
+      LocationFix(latitude: 5.6037, longitude: -0.187, accuracyMeters: 12);
+
+  LocationAccess accessNow;
+
+  /// What Android's prompt leads to; null leaves [accessNow] as it is.
+  LocationAccess? afterRequest;
+
+  /// The next [currentFix]; null means no reading comes (indoors).
+  LocationFix? fix;
+  int? battery;
+
+  int requests = 0;
+  int appSettingsOpened = 0;
+  int locationSettingsOpened = 0;
+  final tracking = <StreamController<LocationFix>>[];
+  final service = StreamController<bool>.broadcast();
+
+  /// The live tracking stream, if one is listened to.
+  StreamController<LocationFix>? get activeTracking {
+    for (final c in tracking.reversed) {
+      if (c.hasListener) return c;
+    }
+    return null;
+  }
+
+  @override
+  Future<LocationAccess> access() async => accessNow;
+
+  @override
+  Future<LocationAccess> requestAccess() async {
+    requests++;
+    if (afterRequest != null) accessNow = afterRequest!;
+    return accessNow;
+  }
+
+  @override
+  Stream<LocationFix> trackEvery(Duration interval) {
+    final controller = StreamController<LocationFix>();
+    tracking.add(controller);
+    return controller.stream;
+  }
+
+  @override
+  Future<LocationFix> currentFix(Duration timeLimit) async {
+    final fix = this.fix;
+    if (fix == null) throw TimeoutException('no fix', timeLimit);
+    return fix;
+  }
+
+  @override
+  Stream<bool> serviceChanges() => service.stream;
+
+  @override
+  Future<int?> batteryPercent() async => battery;
+
+  @override
+  Future<void> openAppSettings() async {
+    appSettingsOpened++;
+  }
+
+  @override
+  Future<void> openLocationSettings() async {
+    locationSettingsOpened++;
+  }
 }

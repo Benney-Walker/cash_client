@@ -19,6 +19,10 @@ import '../theme/app_status_colors.dart';
 /// Submit today screen. Today's totals and the recent list aren't connected
 /// to the backend yet, so they show an empty day.
 ///
+/// While location is off or not allowed, Record deposit becomes "Turn on
+/// location to record" (design H-B): payments need a location point (D34,
+/// owner decision 2026-11-24).
+///
 /// There's no Withdrawal button: collector withdrawal requests were removed
 /// (owner decision 2026-11-15). Members withdraw at a branch office.
 class HomeScreen extends StatelessWidget {
@@ -31,6 +35,8 @@ class HomeScreen extends StatelessWidget {
     this.outboxWaiting = 0,
     this.outboxRefused = 0,
     this.onOpenOutbox,
+    this.locationOff = false,
+    this.onTurnOnLocation,
     this.now = DateTime.now,
   });
 
@@ -49,6 +55,10 @@ class HomeScreen extends StatelessWidget {
   final int outboxWaiting;
   final int outboxRefused;
   final VoidCallback? onOpenOutbox;
+
+  /// Location is off or not allowed, so payments can't be recorded.
+  final bool locationOff;
+  final VoidCallback? onTurnOnLocation;
 
   /// For the greeting; replaceable in tests.
   final DateTime Function() now;
@@ -80,14 +90,26 @@ class HomeScreen extends StatelessWidget {
                     ),
                     const SizedBox(height: 12),
                   ],
-                  GradientButton(
-                    key: const Key('home.recordDeposit'),
-                    onPressed: onRecordDeposit,
-                    child: const _IconLabel(
-                      icon: Icons.add,
-                      label: 'Record deposit',
+                  if (locationOff) ...[
+                    GradientButton(
+                      key: const Key('home.turnOnLocation'),
+                      onPressed: onTurnOnLocation,
+                      child: const _IconLabel(
+                        icon: Icons.location_on_outlined,
+                        label: 'Turn on location to record',
+                      ),
                     ),
-                  ),
+                    const SizedBox(height: 6),
+                    const _LocationOff(),
+                  ] else
+                    GradientButton(
+                      key: const Key('home.recordDeposit'),
+                      onPressed: onRecordDeposit,
+                      child: const _IconLabel(
+                        icon: Icons.add,
+                        label: 'Record deposit',
+                      ),
+                    ),
                   const SizedBox(height: 8),
                   OutlinedButton.icon(
                     key: const Key('home.submitDay'),
@@ -261,6 +283,30 @@ class _OutboxRow extends StatelessWidget {
 }
 
 /// An icon and a label that shortens with "…" instead of overflowing.
+/// The line under "Turn on location to record": icon and words, never
+/// colour alone.
+class _LocationOff extends StatelessWidget {
+  const _LocationOff();
+
+  @override
+  Widget build(BuildContext context) {
+    final status = AppStatusColors.of(context);
+    final textTheme = Theme.of(context).textTheme;
+    return Row(
+      key: const Key('home.locationOff'),
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Icon(Icons.location_off_outlined, size: 16, color: status.danger),
+        const SizedBox(width: 6),
+        Text(
+          "Location is off. Payments can't be recorded.",
+          style: textTheme.bodySmall?.copyWith(color: status.danger),
+        ),
+      ],
+    );
+  }
+}
+
 class _IconLabel extends StatelessWidget {
   const _IconLabel({required this.icon, required this.label});
 

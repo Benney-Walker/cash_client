@@ -104,10 +104,18 @@ class _HomeShellState extends State<HomeShell> {
         );
       return;
     }
+    // Home shows "Turn on location to record" instead, but location can be
+    // switched off between that and the tap.
+    if (services.location.isOff) {
+      services.location.fixAccess();
+      return;
+    }
     startPaymentFlow(
       context,
       directory: services.members,
       outbox: services.outbox,
+      // The payment's own location point (D34), taken before it's saved.
+      beforeSave: services.location.paymentPoint,
       onSaved: services.sync.paymentQueued,
     );
   }
@@ -174,10 +182,20 @@ class _HomeShellState extends State<HomeShell> {
         index: _tab,
         children: [
           ListenableBuilder(
-            listenable: widget.services.outbox,
+            listenable: Listenable.merge([
+              widget.services.outbox,
+              widget.services.location,
+              widget.services.dayClosure,
+            ]),
             builder: (context, _) {
-              final outbox = widget.services.outbox;
+              final services = widget.services;
+              final outbox = services.outbox;
               return HomeScreen(
+                // After submitting, Record deposit explains that the day is
+                // closed, which matters more than location.
+                locationOff: services.location.isOff &&
+                    !services.dayClosure.isClosed,
+                onTurnOnLocation: services.location.fixAccess,
                 staffName: widget.session.staffName,
                 onSeeAll: () => _select(_history),
                 onRecordDeposit: _recordDeposit,
