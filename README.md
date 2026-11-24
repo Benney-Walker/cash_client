@@ -10,7 +10,7 @@ The app is a client of the `bankingbackend` Spring Boot API. It holds no busines
 |---|---|
 | Light and dark theme (Indigo Aurora palette, lighter gradient tints, Inter font) | Done |
 | Redesign with the lighter tints (12 Nov 2026) | Done for every screen: sign-in, Home, History and Settings |
-| Home screen layout and bottom bar (Home, History, Settings) | Done. Record deposit and Submit work; today's totals and recent list not connected yet |
+| Home screen layout and bottom bar (Home, History, Settings) | Done. Record deposit and Submit work; today's totals and the 5 latest payments are live (design T1, 24 Nov 2026) |
 | Settings: profile, theme choice (system / light / dark), app version and sign-out | Done |
 | Sign-in (collectors only) and sign-out | Done. Tokens kept in secure storage |
 | Automatic token refresh; back to sign-in when the backend ends the session | Done |
@@ -87,14 +87,21 @@ After sign-in, a bottom bar switches between Home, History and Settings (`lib/ho
 Home (`lib/home/home_screen.dart`) keeps design A's layout, restyled as design H1, "wash header" (12 Nov 2026):
 
 - The pale gradient wash across the top, running under the status bar, with rounded bottom corners. On it: a greeting for the time of day and the collector's name, shown in normal case (the backend sends it in upper case).
-- Today's collections on a glass card inside the wash: total, number of records and, later, how many are waiting to send. All text on the glass uses the panel's main text colour, as on sign-in.
+- Today's collections on a glass card inside the wash (design T1, 24 Nov 2026): the total, savings and shares, "14 payments · 2 on this phone", and, when the server couldn't be reached, "Updated 10:44 · offline". All text on the glass uses the panel's main text colour, as on sign-in.
 - An **Outbox** row on the plain page, only when payments are waiting on the phone or were refused: "3 waiting · 1 refused", opening the Outbox (design R2, 15 Nov 2026).
 - On the plain page below: **Record deposit** (the screen's one gradient button) full width, with **Submit today's collections** beneath it. Design A had a **Withdrawal** button beside Record deposit; it was removed with collector withdrawal requests (owner decision, 15 Nov 2026).
-- **Recent** records, with **See all** opening the History tab.
+- **Recent**: the 5 latest payments, newest first, with **See all** opening the History tab. Each row shows the member's initials and name, Savings or Shares, the account number and the time, the amount, and where it stands: "Can correct · 4:12" or "Sends when online" (on the phone; tapping opens the Outbox), Refused, Completed or Failed.
 
 While location is off or not allowed, **Record deposit** becomes **Turn on location to record**, with "Location is off. Payments can't be recorded." beneath it (design H-B, 24 Nov 2026; see Location tracking).
 
-**Record deposit** opens the payment flow (below), and **Submit today's collections** the Submit today screen (see Submitting the day). Once the day is submitted, Record deposit says no more payments can be recorded until it's approved, with a View link back to the submission. Today's total and the recent list on home aren't connected yet: they show GH₵ 0.00 and "No collections recorded today".
+**Record deposit** opens the payment flow (below), and **Submit today's collections** the Submit today screen (see Submitting the day). Once the day is submitted, Record deposit says no more payments can be recorded until it's approved, with a View link back to the submission.
+
+Today's figures (`lib/home/today.dart`, owner decisions 24 Nov 2026):
+
+- They're the server's day summary (`GET /api/collector/v1/payments`) **plus the payments still on the phone**, because that cash is already collected and it's what Submit hands in. A payment both lists is counted once. Refused payments show in the list but aren't counted: the server didn't take them. Failed payments count in the number but not the money, as on the server.
+- Downloaded when home opens, after every sync that sent a payment (or that got through after a failed download), and on pull-down, which syncs first.
+- Each download is saved on the phone (`sync_meta`). Offline, the one from today is used with "Updated 10:44 · offline"; with none, only the phone's payments count ("Only payments on this phone · offline"). A server error says "couldn't update" instead.
+- Only today's payments, by the phone's recording time (Accra time, which is UTC). Cleared at sign-out and when the session ends.
 
 History (`lib/home/history_screen.dart`), design Y1, "wash header" (12 Nov 2026):
 
@@ -129,7 +136,7 @@ Member list on the phone (`member_cache.dart`, `member_directory.dart`):
 - The list is cleared when the collector signs out or the session ends.
 - The SQLite code itself isn't covered by tests (that needs a native SQLite library on the test machine); the logic around it is tested with an in-memory cache.
 
-Not yet: connecting home's totals and the History tab to the backend.
+Not yet: connecting the History tab to the backend.
 
 ## Submitting the day
 

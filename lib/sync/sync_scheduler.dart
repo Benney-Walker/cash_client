@@ -38,6 +38,10 @@ class SyncScheduler with WidgetsBindingObserver {
 
   StreamSubscription<bool>? _connection;
   Timer? _nextDue;
+
+  /// Runs after each sync, so home can download the new totals once
+  /// payments reach the server. Set by the app.
+  void Function(SyncReport report)? onSynced;
   bool _started = false;
 
   /// The scheduler of the running app, if a collector is signed in. When
@@ -94,6 +98,7 @@ class SyncScheduler with WidgetsBindingObserver {
     }
     await _outbox.refresh();
     _scheduleNextDue();
+    onSynced?.call(report);
     return report;
   }
 
@@ -109,6 +114,7 @@ class SyncScheduler with WidgetsBindingObserver {
     }
     await _outbox.refresh();
     _scheduleNextDue();
+    onSynced?.call(report);
     return report;
   }
 

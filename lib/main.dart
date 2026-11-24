@@ -14,6 +14,7 @@ import 'collector/member_cache.dart';
 import 'collector/member_directory.dart';
 import 'config/app_config.dart';
 import 'home/home_shell.dart';
+import 'home/today.dart';
 import 'location/location_disclosure_screen.dart';
 import 'location/location_platform.dart';
 import 'location/location_store.dart';
@@ -89,6 +90,13 @@ Future<void> main() async {
   );
   // Each 5-minute point goes to the backend straight away when online.
   location.onPoint = () => sync.syncNow().ignore();
+  final today = TodayController(
+    api: collectorApi,
+    outbox: outbox,
+    store: SqliteDaySummaryStore(database),
+    staffId: staffId,
+  );
+  sync.onSynced = today.synced;
 
   final services = AppServices(
     collectorApi: collectorApi,
@@ -103,6 +111,7 @@ Future<void> main() async {
       staffId: staffId,
     )..load(),
     location: location,
+    today: today,
     openOutboxRequest: openOutbox,
   );
 
@@ -270,6 +279,8 @@ class _AuthGateState extends State<AuthGate> {
     // The branch member list is personal data; it doesn't outlive the
     // session it was downloaded in.
     services.members.clear();
+    // So are today's figures and payments.
+    services.today.clear();
     // This widget is the bottom screen, so swapping it to the login screen
     // isn't enough when other screens (such as the payment screens) are
     // open on top. Close them, so a collector whose session ended can't

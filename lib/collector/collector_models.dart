@@ -112,6 +112,14 @@ enum PaymentStatus {
         'FAILED' => failed,
         _ => unknown,
       };
+
+  /// As the backend writes it; null for a status the app doesn't know.
+  String? get wireName => switch (this) {
+        pending => 'PENDING',
+        completed => 'COMPLETED',
+        failed => 'FAILED',
+        unknown => null,
+      };
 }
 
 /// A payment as the backend returns it (`CollectorPaymentResponse`).
@@ -178,6 +186,20 @@ class CollectorPayment {
   }
 
   static DateTime? _time(Object? value) => parseServerTime(value);
+
+  /// The same shape [fromJson] reads, for keeping on the phone.
+  Map<String, Object?> toJson() => {
+        'transactionId': transactionId,
+        'idempotencyKey': idempotencyKey,
+        'type': type.wireName,
+        'accountNumber': accountNumber,
+        'memberName': memberName,
+        'amount': amount.toDecimalString(),
+        'status': status.wireName,
+        'failureReason': failureReason,
+        'createdAt': createdAt?.toUtc().toIso8601String(),
+        'receivedAt': receivedAt?.toUtc().toIso8601String(),
+      };
 }
 
 /// A backend `LocalDateTime` such as `2026-11-15T10:10:00`, as a UTC
@@ -239,6 +261,15 @@ class CollectorDaySummary {
       payments: List.unmodifiable(payments),
     );
   }
+
+  /// The same shape [fromJson] reads, for keeping on the phone.
+  Map<String, Object?> toJson() => {
+        'count': count,
+        'savingsTotal': savingsTotal.toDecimalString(),
+        'sharesTotal': sharesTotal.toDecimalString(),
+        'total': total.toDecimalString(),
+        'payments': [for (final payment in payments) payment.toJson()],
+      };
 }
 
 /// The backend's `CollectorSubmissionStatus`. There's no rejection: the

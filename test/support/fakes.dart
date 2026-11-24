@@ -11,6 +11,7 @@ import 'package:cash_client/collector/collector_models.dart';
 import 'package:cash_client/collector/member_cache.dart';
 import 'package:cash_client/collector/member_directory.dart';
 import 'package:cash_client/common/money.dart';
+import 'package:cash_client/home/today.dart';
 import 'package:cash_client/location/location_platform.dart';
 import 'package:cash_client/location/location_point.dart';
 import 'package:cash_client/location/location_store.dart';
@@ -631,6 +632,7 @@ AppServices testServices({
   MemorySubmittedDayStore? dayStore,
   FakeLocationPlatform? locationPlatform,
   MemoryLocationStore? locationStore,
+  MemoryDaySummaryStore? daySummaryStore,
 }) {
   final collector = backend ?? FakeCollectorBackend.working();
   final points = locationStore ?? MemoryLocationStore();
@@ -638,6 +640,13 @@ AppServices testServices({
   final who = staffId ?? () => collectorSession.staffId;
   final notify = notifications ?? FakeNotifications();
   final outbox = Outbox(store: store, staffId: who, now: now);
+  final today = TodayController(
+    api: collector.api,
+    outbox: outbox,
+    store: daySummaryStore ?? MemoryDaySummaryStore(),
+    staffId: who,
+    now: now,
+  );
   return AppServices(
     collectorApi: collector.api,
     members: MemberDirectory(
@@ -659,7 +668,7 @@ AppServices testServices({
       connectivity: connectivity ?? FakeConnectivity(),
       background: background ?? FakeBackgroundScheduler(),
       notifications: notify,
-    ),
+    )..onSynced = today.synced,
     dayClosure: DayClosure(
       store: dayStore ?? MemorySubmittedDayStore(),
       staffId: who,
@@ -670,6 +679,7 @@ AppServices testServices({
       staffId: who,
       now: now,
     ),
+    today: today,
   );
 }
 
@@ -818,5 +828,25 @@ class FakeLocationPlatform implements LocationPlatform {
   @override
   Future<void> openLocationSettings() async {
     locationSettingsOpened++;
+  }
+}
+
+/// In-memory [DaySummaryStore] for tests.
+class MemoryDaySummaryStore implements DaySummaryStore {
+  MemoryDaySummaryStore([this.saved]);
+
+  SavedDaySummary? saved;
+
+  @override
+  Future<SavedDaySummary?> read() async => saved;
+
+  @override
+  Future<void> save(SavedDaySummary saved) async {
+    this.saved = saved;
+  }
+
+  @override
+  Future<void> clear() async {
+    saved = null;
   }
 }

@@ -505,4 +505,46 @@ void main() {
       expect(services.location.isTracking, isFalse);
     });
   });
+
+  group("home's figures (Step 1)", () {
+    testWidgets("the server's totals plus a payment just recorded",
+        (tester) async {
+      await pumpApp(tester, store: MemorySessionStore(collectorSession));
+      // The fake server's day: GH₵ 1,040.00 savings and GH₵ 200.00 shares.
+      expect(find.text('GH₵ 1,240.00'), findsOneWidget);
+      expect(find.text('18 payments'), findsOneWidget);
+
+      await tapKey(tester, 'home.recordDeposit');
+      await tester.tap(find.text('Ama Owusu'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const Key('record.amount')), '50');
+      await tapKey(tester, 'record.continue');
+      await tester.tap(find.byKey(const Key('confirm.record')));
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      await tester.tap(find.byKey(const Key('saved.done')));
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+
+      expect(find.text('GH₵ 1,290.00'), findsOneWidget);
+      expect(find.text('19 payments · 1 on this phone'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('home.recent.0')),
+          matching: find.textContaining('Can correct'),
+        ),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('signing out clears them', (tester) async {
+      await pumpApp(tester, store: MemorySessionStore(collectorSession));
+      expect(services.today.view.hasServerFigures, isTrue);
+
+      await sessions.signOut();
+      await tester.pumpAndSettle();
+
+      expect(services.today.view.hasServerFigures, isFalse);
+    });
+  });
 }

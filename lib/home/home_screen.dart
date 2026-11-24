@@ -1,12 +1,16 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../collector/payment_saved_screen.dart';
 import '../common/glass_card.dart';
 import '../common/gradient_button.dart';
 import '../common/wash_header.dart';
 import '../common/names.dart';
 import '../theme/app_gradients.dart';
 import '../theme/app_status_colors.dart';
+import 'today.dart';
 
 /// The collector's home, design H1 ("wash header"): the pale gradient wash
 /// across the top with the greeting and today's total on a glass card,
@@ -16,8 +20,11 @@ import '../theme/app_status_colors.dart';
 /// sits above the actions (design R2) and opens the Outbox.
 ///
 /// Record deposit opens the payment flow and Submit today's collections the
-/// Submit today screen. Today's totals and the recent list aren't connected
-/// to the backend yet, so they show an empty day.
+/// Submit today screen.
+///
+/// Today's figures and the 5 latest payments come from [today] (design T1,
+/// owner decisions 2026-11-24): the server's day summary plus the payments
+/// still on the phone. Pulling down refreshes them.
 ///
 /// While location is off or not allowed, Record deposit becomes "Turn on
 /// location to record" (design H-B): payments need a location point (D34,
@@ -37,6 +44,8 @@ class HomeScreen extends StatelessWidget {
     this.onOpenOutbox,
     this.locationOff = false,
     this.onTurnOnLocation,
+    this.today = TodayView.empty,
+    this.onRefresh,
     this.now = DateTime.now,
   });
 
@@ -60,6 +69,12 @@ class HomeScreen extends StatelessWidget {
   final bool locationOff;
   final VoidCallback? onTurnOnLocation;
 
+  /// Today's figures and recent payments.
+  final TodayView today;
+
+  /// Pull to refresh; null turns it off.
+  final Future<void> Function()? onRefresh;
+
   /// For the greeting; replaceable in tests.
   final DateTime Function() now;
 
@@ -73,69 +88,85 @@ class HomeScreen extends StatelessWidget {
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: isDark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark,
       child: Scaffold(
-        body: ListView(
-          padding: EdgeInsets.zero,
-          children: [
-            _HomeHeader(greeting: greetingFor(now()), name: staffName),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  if (outboxWaiting + outboxRefused > 0) ...[
-                    _OutboxRow(
-                      waiting: outboxWaiting,
-                      refused: outboxRefused,
-                      onTap: onOpenOutbox,
-                    ),
-                    const SizedBox(height: 12),
-                  ],
-                  if (locationOff) ...[
-                    GradientButton(
-                      key: const Key('home.turnOnLocation'),
-                      onPressed: onTurnOnLocation,
-                      child: const _IconLabel(
-                        icon: Icons.location_on_outlined,
-                        label: 'Turn on location to record',
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    const _LocationOff(),
-                  ] else
-                    GradientButton(
-                      key: const Key('home.recordDeposit'),
-                      onPressed: onRecordDeposit,
-                      child: const _IconLabel(
-                        icon: Icons.add,
-                        label: 'Record deposit',
-                      ),
-                    ),
-                  const SizedBox(height: 8),
-                  OutlinedButton.icon(
-                    key: const Key('home.submitDay'),
-                    onPressed: onSubmitDay,
-                    icon: const Icon(Icons.send_outlined),
-                    label: const Text("Submit today's collections"),
-                  ),
-                  const SizedBox(height: 20),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text('Recent', style: textTheme.titleMedium),
-                      ),
-                      TextButton(
-                        key: const Key('home.seeAll'),
-                        onPressed: onSeeAll,
-                        child: const Text('See all'),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  const _EmptyRecent(),
-                ],
+        body: _MaybeRefresh(
+          onRefresh: onRefresh,
+          child: ListView(
+            // So pull-to-refresh works even when the page doesn't scroll.
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: EdgeInsets.zero,
+            children: [
+              _HomeHeader(
+                greeting: greetingFor(now()),
+                name: staffName,
+                today: today,
               ),
-            ),
-          ],
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (outboxWaiting + outboxRefused > 0) ...[
+                      _OutboxRow(
+                        waiting: outboxWaiting,
+                        refused: outboxRefused,
+                        onTap: onOpenOutbox,
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                    if (locationOff) ...[
+                      GradientButton(
+                        key: const Key('home.turnOnLocation'),
+                        onPressed: onTurnOnLocation,
+                        child: const _IconLabel(
+                          icon: Icons.location_on_outlined,
+                          label: 'Turn on location to record',
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      const _LocationOff(),
+                    ] else
+                      GradientButton(
+                        key: const Key('home.recordDeposit'),
+                        onPressed: onRecordDeposit,
+                        child: const _IconLabel(
+                          icon: Icons.add,
+                          label: 'Record deposit',
+                        ),
+                      ),
+                    const SizedBox(height: 8),
+                    OutlinedButton.icon(
+                      key: const Key('home.submitDay'),
+                      onPressed: onSubmitDay,
+                      icon: const Icon(Icons.send_outlined),
+                      label: const Text("Submit today's collections"),
+                    ),
+                    const SizedBox(height: 20),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text('Recent', style: textTheme.titleMedium),
+                        ),
+                        TextButton(
+                          key: const Key('home.seeAll'),
+                          onPressed: onSeeAll,
+                          child: const Text('See all'),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    if (today.recent.isEmpty)
+                      const _EmptyRecent()
+                    else
+                      _RecentList(
+                        payments: today.recent,
+                        onOpenOutbox: onOpenOutbox,
+                        now: now,
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -151,10 +182,15 @@ String greetingFor(DateTime time) {
 
 /// The wash across the top: greeting, name and today's total.
 class _HomeHeader extends StatelessWidget {
-  const _HomeHeader({required this.greeting, required this.name});
+  const _HomeHeader({
+    required this.greeting,
+    required this.name,
+    required this.today,
+  });
 
   final String greeting;
   final String name;
+  final TodayView today;
 
   @override
   Widget build(BuildContext context) {
@@ -182,23 +218,31 @@ class _HomeHeader extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 12),
-          const _TodayCard(),
+          _TodayCard(today: today),
         ],
       ),
     );
   }
 }
 
-/// Today's total on a glass card. Until the backend can report the day's
-/// records, it shows an empty day.
+/// Today's figures on a glass card (design T1): total, savings and shares,
+/// how many payments and how many are still on the phone. All text uses the
+/// panel's main colour: the secondary tone is too faint on the glass.
 class _TodayCard extends StatelessWidget {
-  const _TodayCard();
+  const _TodayCard({required this.today});
+
+  final TodayView today;
 
   @override
   Widget build(BuildContext context) {
     final gradients = AppGradients.of(context);
     final textTheme = Theme.of(context).textTheme;
     final label = textTheme.bodySmall?.copyWith(color: gradients.panelText);
+    final figure = label?.copyWith(
+      fontWeight: FontWeight.w600,
+      fontFeatures: const [FontFeature.tabularFigures()],
+    );
+    final updated = todayUpdatedLabel(today);
 
     return GlassCard(
       padding: const EdgeInsets.all(14),
@@ -209,7 +253,7 @@ class _TodayCard extends StatelessWidget {
           Text("Today's collections", style: label),
           const SizedBox(height: 2),
           Text(
-            'GH₵ 0.00',
+            today.total.format(),
             key: const Key('home.todayTotal'),
             style: textTheme.headlineMedium?.copyWith(
               color: gradients.panelText,
@@ -217,9 +261,320 @@ class _TodayCard extends StatelessWidget {
               fontFeatures: const [FontFeature.tabularFigures()],
             ),
           ),
-          const SizedBox(height: 2),
-          Text('No records yet today', style: label),
+          const SizedBox(height: 4),
+          Wrap(
+            spacing: 16,
+            runSpacing: 2,
+            children: [
+              Text.rich(
+                TextSpan(children: [
+                  const TextSpan(text: 'Savings '),
+                  TextSpan(text: today.savings.format(), style: figure),
+                ]),
+                key: const Key('home.todaySavings'),
+                style: label,
+              ),
+              Text.rich(
+                TextSpan(children: [
+                  const TextSpan(text: 'Shares '),
+                  TextSpan(text: today.shares.format(), style: figure),
+                ]),
+                key: const Key('home.todayShares'),
+                style: label,
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            todayCountLabel(today),
+            key: const Key('home.todayCount'),
+            style: label,
+          ),
+          if (updated != null) ...[
+            const SizedBox(height: 2),
+            Row(
+              children: [
+                Icon(Icons.cloud_off_outlined,
+                    size: 14, color: gradients.panelText),
+                const SizedBox(width: 4),
+                Flexible(
+                  child: Text(
+                    updated,
+                    key: const Key('home.todayUpdated'),
+                    style: label,
+                  ),
+                ),
+              ],
+            ),
+          ],
         ],
+      ),
+    );
+  }
+}
+
+/// "14 payments · 2 on this phone", or "No records yet today".
+String todayCountLabel(TodayView today) {
+  if (today.count == 0) return 'No records yet today';
+  final payments = today.count == 1 ? '1 payment' : '${today.count} payments';
+  return today.onPhone == 0
+      ? payments
+      : '$payments · ${today.onPhone} on this phone';
+}
+
+/// Shown only when the server's figures couldn't be downloaded: when they
+/// date from, or that only the phone's payments are counted.
+String? todayUpdatedLabel(TodayView today) {
+  final why = switch (today.problem) {
+    TodayProblem.none => null,
+    TodayProblem.offline => 'offline',
+    TodayProblem.failed => "couldn't update",
+  };
+  if (why == null) return null;
+  final at = today.updatedAt;
+  if (at == null) return 'Only payments on this phone · $why';
+  return 'Updated ${clockTime(at)} · $why';
+}
+
+/// "10:42", in the phone's time (Ghana is UTC).
+String clockTime(DateTime time) {
+  final t = time.toLocal();
+  return '${t.hour.toString().padLeft(2, '0')}:'
+      '${t.minute.toString().padLeft(2, '0')}';
+}
+
+/// Pull-to-refresh around [child] when there's something to refresh.
+class _MaybeRefresh extends StatelessWidget {
+  const _MaybeRefresh({required this.onRefresh, required this.child});
+
+  final Future<void> Function()? onRefresh;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final refresh = onRefresh;
+    if (refresh == null) return child;
+    return RefreshIndicator(onRefresh: refresh, child: child);
+  }
+}
+
+/// Home's latest payments (design T1): initials, member, type, account and
+/// time, the amount, and where it stands. A payment still on the phone
+/// counts down its 5 minutes and opens the Outbox when tapped.
+class _RecentList extends StatefulWidget {
+  const _RecentList({
+    required this.payments,
+    required this.onOpenOutbox,
+    required this.now,
+  });
+
+  final List<RecentPayment> payments;
+  final VoidCallback? onOpenOutbox;
+  final DateTime Function() now;
+
+  @override
+  State<_RecentList> createState() => _RecentListState();
+}
+
+class _RecentListState extends State<_RecentList> {
+  Timer? _ticker;
+
+  @override
+  void initState() {
+    super.initState();
+    _syncTicker();
+  }
+
+  @override
+  void didUpdateWidget(_RecentList oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _syncTicker();
+  }
+
+  /// Ticks every second only while a countdown is showing.
+  void _syncTicker() {
+    final now = widget.now();
+    final counting = widget.payments.any(
+      (p) => p.phonePayment?.isCorrectable(now) ?? false,
+    );
+    if (counting && _ticker == null) {
+      _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (!mounted) return;
+        setState(() {});
+        _syncTicker();
+      });
+    } else if (!counting) {
+      _ticker?.cancel();
+      _ticker = null;
+    }
+  }
+
+  @override
+  void dispose() {
+    _ticker?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final now = widget.now();
+    return Card(
+      margin: EdgeInsets.zero,
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        children: [
+          for (var i = 0; i < widget.payments.length; i++) ...[
+            if (i > 0) const Divider(height: 1, indent: 60),
+            _RecentRow(
+              key: Key('home.recent.$i'),
+              payment: widget.payments[i],
+              now: now,
+              onTap: widget.payments[i].phonePayment == null
+                  ? null
+                  : widget.onOpenOutbox,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _RecentRow extends StatelessWidget {
+  const _RecentRow({
+    super.key,
+    required this.payment,
+    required this.now,
+    required this.onTap,
+  });
+
+  final RecentPayment payment;
+  final DateTime now;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    final phone = payment.phonePayment;
+
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Row(
+          children: [
+            ExcludeSemantics(
+              child: CircleAvatar(
+                radius: 18,
+                backgroundColor: scheme.primaryContainer,
+                child: Text(
+                  initials(payment.memberName),
+                  style: textTheme.labelMedium?.copyWith(
+                    color: scheme.onPrimaryContainer,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    displayName(payment.memberName),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: textTheme.bodyLarge,
+                  ),
+                  Text(
+                    '${payment.type.label} · ${payment.accountNumber} · '
+                    '${clockTime(payment.createdAt)}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: textTheme.bodySmall
+                        ?.copyWith(color: scheme.onSurfaceVariant),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(
+                  payment.amount.format(),
+                  style: textTheme.bodyLarge?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+                const SizedBox(height: 2),
+                if (phone != null)
+                  OutboxStatusChip(payment: phone, now: now)
+                else
+                  _ServerStatusChip(state: payment.state),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Where a payment the server has stands: icon and word, never colour
+/// alone.
+class _ServerStatusChip extends StatelessWidget {
+  const _ServerStatusChip({required this.state});
+
+  final RecentState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final status = AppStatusColors.of(context);
+    final (IconData icon, String label, Color fg, Color bg) = switch (state) {
+      RecentState.completed => (
+          Icons.check_circle_outline,
+          'Completed',
+          status.success,
+          status.successContainer,
+        ),
+      RecentState.failed => (
+          Icons.cancel_outlined,
+          'Failed',
+          status.danger,
+          status.dangerContainer,
+        ),
+      _ => (
+          Icons.cloud_done_outlined,
+          'Received',
+          status.neutral,
+          status.neutralContainer,
+        ),
+    };
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 13, color: fg),
+            const SizedBox(width: 3),
+            Text(
+              label,
+              style: Theme.of(context)
+                  .textTheme
+                  .labelSmall
+                  ?.copyWith(color: fg, fontWeight: FontWeight.w600),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -282,7 +637,6 @@ class _OutboxRow extends StatelessWidget {
   }
 }
 
-/// An icon and a label that shortens with "…" instead of overflowing.
 /// The line under "Turn on location to record": icon and words, never
 /// colour alone.
 class _LocationOff extends StatelessWidget {
@@ -307,6 +661,7 @@ class _LocationOff extends StatelessWidget {
   }
 }
 
+/// An icon and a label that shortens with "…" instead of overflowing.
 class _IconLabel extends StatelessWidget {
   const _IconLabel({required this.icon, required this.label});
 

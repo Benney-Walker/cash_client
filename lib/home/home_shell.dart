@@ -48,6 +48,8 @@ class _HomeShellState extends State<HomeShell> {
   void initState() {
     super.initState();
     widget.services.openOutboxRequest.addListener(_onOpenOutboxRequest);
+    // Today's figures for home; the sync refreshes them as payments arrive.
+    widget.services.today.refresh();
     // The app may have been started by tapping a notification.
     WidgetsBinding.instance.addPostFrameCallback((_) => _onOpenOutboxRequest());
   }
@@ -120,6 +122,13 @@ class _HomeShellState extends State<HomeShell> {
     );
   }
 
+  /// Pull to refresh: send what's ready, then download today's figures.
+  Future<void> _refreshToday() async {
+    final services = widget.services;
+    await services.sync.syncNow();
+    await services.today.refresh();
+  }
+
   void _submitDay() {
     final services = widget.services;
     Navigator.of(context).push(
@@ -183,7 +192,7 @@ class _HomeShellState extends State<HomeShell> {
         children: [
           ListenableBuilder(
             listenable: Listenable.merge([
-              widget.services.outbox,
+              widget.services.today,
               widget.services.location,
               widget.services.dayClosure,
             ]),
@@ -196,6 +205,8 @@ class _HomeShellState extends State<HomeShell> {
                 locationOff: services.location.isOff &&
                     !services.dayClosure.isClosed,
                 onTurnOnLocation: services.location.fixAccess,
+                today: services.today.view,
+                onRefresh: _refreshToday,
                 staffName: widget.session.staffName,
                 onSeeAll: () => _select(_history),
                 onRecordDeposit: _recordDeposit,
