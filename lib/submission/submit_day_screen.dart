@@ -5,7 +5,6 @@ import 'package:flutter/services.dart';
 
 import '../collector/collector_api.dart';
 import '../collector/collector_models.dart';
-import '../collector/payment_saved_screen.dart';
 import '../common/glass_card.dart';
 import '../common/gradient_button.dart';
 import '../common/money.dart';
@@ -20,13 +19,13 @@ import 'day_closure.dart';
 /// Closing the day, design D1 ("Submit screen", owner decision 2026-11-16),
 /// against backend PR #14 (decision D35).
 ///
-/// Before submitting it shows today's totals and what still stands in the
-/// way: payments on the phone the backend doesn't have yet, refused ones
-/// (Submit is blocked until the admin sorts them out, owner decision
-/// 2026-11-16), and payments still in their 10 minutes. After submitting,
-/// the same screen shows the submission waiting for approval. Approval
-/// signs the collector out; the screen checks every 30 seconds so the app
-/// notices.
+/// Before submitting it shows today's totals and the payments still on the
+/// phone. Submitting first sends every one of those, even those still in
+/// their 5 minutes (backend, 23 Nov 2026), and goes ahead only once the
+/// server has them all. Refused payments block it until the admin sorts
+/// them out (owner decision 2026-11-16). After submitting, the same screen
+/// shows the submission waiting for approval. Approval signs the collector
+/// out; the screen checks every 30 seconds so the app notices.
 class SubmitDayScreen extends StatefulWidget {
   const SubmitDayScreen({
     super.key,
@@ -34,7 +33,7 @@ class SubmitDayScreen extends StatefulWidget {
     required this.outbox,
     required this.dayClosure,
     required this.syncOutbox,
-    this.now,
+    required this.sendAllNow,
     this.pollEvery = const Duration(seconds: 30),
   });
 
@@ -45,7 +44,10 @@ class SubmitDayScreen extends StatefulWidget {
   /// Sends anything in the outbox that's ready, before the totals load.
   /// Also behind Try again in the Outbox opened from here.
   final Future<SyncReport> Function() syncOutbox;
-  final DateTime Function()? now;
+
+  /// Sends every payment on the phone, held ones included, before
+  /// submitting.
+  final Future<SyncReport> Function() sendAllNow;
   final Duration pollEvery;
 
   @override
@@ -59,27 +61,16 @@ class _SubmitDayScreenState extends State<SubmitDayScreen> {
   String? _loadError;
   bool _submitting = false;
   String? _submitError;
-  Timer? _ticker;
   Timer? _poll;
-
-  DateTime _now() => (widget.now ?? DateTime.now)().toUtc();
 
   @override
   void initState() {
     super.initState();
     _load();
-    // Countdowns for payments still in their 10 minutes.
-    _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
-      final summary = _summary;
-      if (mounted && summary != null && summary.inWindow(_now()).isNotEmpty) {
-        setState(() {});
-      }
-    });
   }
 
   @override
   void dispose() {
-    _ticker?.cancel();
     _poll?.cancel();
     super.dispose();
   }
@@ -153,25 +144,13 @@ class _SubmitDayScreenState extends State<SubmitDayScreen> {
           'refused by the server. Call your admin to sort '
           '${refused == 1 ? 'it' : 'them'} out before you submit.';
     }
-    final waiting = widget.outbox.waiting.length;
-    if (waiting > 0) {
-      return "${_payments(waiting)} ${waiting == 1 ? "hasn't" : "haven't"} "
-          'reached the server yet. They are sent when their 10 minutes are '
-          "up and you're online. Submit after that.";
-    }
-    final inWindow = _summary?.inWindow(_now()) ?? const [];
-    if (inWindow.isNotEmpty) {
-      return '${_payments(inWindow.length)} ${inWindow.length == 1 ? 'is' : 'are'} '
-          'still in ${inWindow.length == 1 ? 'its' : 'their'} 10 minutes. '
-          'You can submit at ${clockTime(_lastWindowCloses(inWindow))}.';
-    }
     return null;
   }
 
-  static DateTime _lastWindowCloses(List<CollectorPayment> inWindow) =>
-      inWindow
-          .map((p) => p.correctableUntil!)
-          .reduce((a, b) => a.isAfter(b) ? a : b);
+  /// The total of the payments still on the phone (not refused), which
+  /// Submit sends first.
+  Cedis _heldTotal() => Cedis.pesewas(widget.outbox.waiting
+      .fold<int>(0, (sum, p) => sum + p.amount.pesewas));
 
   Future<void> _submit() async {
     if (_submitting) return;
@@ -180,16 +159,21 @@ class _SubmitDayScreenState extends State<SubmitDayScreen> {
       setState(() => _submitError = blocker);
       return;
     }
-    final total = _summary?.total ?? Cedis.zero;
+    final held = widget.outbox.waiting.length;
+    final total = Cedis.pesewas(
+        (_summary?.total ?? Cedis.zero).pesewas + _heldTotal().pesewas);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         key: const Key('submit.confirmDialog'),
         title: const Text("Submit today's collections?"),
         content: Text(
-          "You'll hand in ${total.format()} to the office. No more payments "
-          "can be recorded until it's approved, and approval signs you out "
-          'until tomorrow.',
+          "You'll hand in ${total.format()} to the office. "
+          '${held == 0 ? '' : '${_payments(held)} still on this phone '
+              '${held == 1 ? 'is' : 'are'} sent first, so '
+              "${held == 1 ? 'it' : 'they'} can't be corrected after this. "}"
+          "No more payments can be recorded until it's approved, and "
+          'approval signs you out until tomorrow.',
         ),
         actions: [
           TextButton(
@@ -211,6 +195,22 @@ class _SubmitDayScreenState extends State<SubmitDayScreen> {
       _submitting = true;
       _submitError = null;
     });
+    // Everything on the phone goes first: the backend counts only what it
+    // has, and refuses payments created before the submission.
+    final report = await widget.sendAllNow();
+    if (!mounted) return;
+    final blocker = _blocker();
+    final stillHeld = widget.outbox.waiting.length;
+    if (blocker != null || stillHeld > 0) {
+      setState(() {
+        _submitting = false;
+        _submitError = blocker ??
+            "Couldn't send ${_payments(stillHeld)} still on this phone"
+                '${report.offline ? '' : ' to the server'}. Check your '
+                'connection and tap Submit collections again.';
+      });
+      return;
+    }
     try {
       final submission = await widget.api.submitDay();
       if (!mounted) return;
@@ -283,7 +283,6 @@ class _SubmitDayScreenState extends State<SubmitDayScreen> {
     }
 
     final outbox = widget.outbox;
-    final inWindow = summary.inWindow(_now());
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -309,19 +308,6 @@ class _SubmitDayScreenState extends State<SubmitDayScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 _outboxCheck(outbox),
-                const SizedBox(height: 10),
-                inWindow.isEmpty
-                    ? const _Check.ok(
-                        key: Key('submit.windowCheck'),
-                        text: 'No payments in their 10 minutes',
-                      )
-                    : _Check.wait(
-                        key: const Key('submit.windowCheck'),
-                        text: '${_payments(inWindow.length)} in '
-                            '${inWindow.length == 1 ? 'its' : 'their'} 10 '
-                            'minutes · '
-                            '${formatCountdown(_lastWindowCloses(inWindow).difference(_now()))}',
-                      ),
               ],
             ),
           ),
@@ -366,7 +352,8 @@ class _SubmitDayScreenState extends State<SubmitDayScreen> {
     if (waiting > 0) {
       return _Check.wait(
         key: const Key('submit.outboxCheck'),
-        text: '${_payments(waiting)} still on this phone',
+        text: '${_payments(waiting)} on this phone '
+            '(${_heldTotal().format()}) · sent when you submit',
       );
     }
     return const _Check.ok(

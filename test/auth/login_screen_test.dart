@@ -15,7 +15,9 @@ void main() {
 
   Future<void> pumpLogin(WidgetTester tester, AuthApi api) async {
     store = MemorySessionStore();
-    sessions = SessionManager(api: api, store: store);
+    sessions = SessionManager(
+      deviceIds: const FakeDeviceId(),
+      api: api, store: store);
     await sessions.restore();
     await tester.pumpWidget(
       MaterialApp(
@@ -157,7 +159,9 @@ void main() {
 
     for (final theme in [AppTheme.light, AppTheme.dark]) {
       store = MemorySessionStore();
-      sessions = SessionManager(api: fakeAuthApi(200, loginBody()), store: store);
+      sessions = SessionManager(
+      deviceIds: const FakeDeviceId(),
+      api: fakeAuthApi(200, loginBody()), store: store);
       await sessions.restore();
       await tester.pumpWidget(
         MaterialApp(

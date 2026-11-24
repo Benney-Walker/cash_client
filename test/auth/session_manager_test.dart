@@ -1,6 +1,9 @@
+import 'dart:convert';
+
 import 'package:cash_client/api/api_exception.dart';
 import 'package:cash_client/auth/auth_api.dart';
 import 'package:cash_client/auth/auth_session.dart';
+import 'package:cash_client/auth/device_id.dart';
 import 'package:cash_client/auth/session_manager.dart';
 import 'package:cash_client/auth/sign_in.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -13,6 +16,8 @@ void main() {
   group('restore', () {
     test('picks up a stored collector session', () async {
       final sessions = SessionManager(
+      deviceIds: const FakeDeviceId(),
+      
         api: fakeAuthApi(200, loginBody()),
         store: MemorySessionStore(collectorSession),
       );
@@ -33,7 +38,9 @@ void main() {
         refreshToken: 'r',
       ));
       final sessions =
-          SessionManager(api: fakeAuthApi(200, loginBody()), store: store);
+          SessionManager(
+      deviceIds: const FakeDeviceId(),
+      api: fakeAuthApi(200, loginBody()), store: store);
 
       await sessions.restore();
 
@@ -46,7 +53,9 @@ void main() {
     test('a collector is signed in and the session is saved', () async {
       final store = MemorySessionStore();
       final sessions =
-          SessionManager(api: fakeAuthApi(200, loginBody()), store: store);
+          SessionManager(
+      deviceIds: const FakeDeviceId(),
+      api: fakeAuthApi(200, loginBody()), store: store);
 
       await sessions.signIn(staffId: 'STF001', password: 'x');
 
@@ -56,6 +65,8 @@ void main() {
 
     test('a collector who also has another role is allowed', () async {
       final sessions = SessionManager(
+      deviceIds: const FakeDeviceId(),
+      
         api: fakeAuthApi(200, loginBody(roles: ['AGENT', 'COLLECTOR'])),
         store: MemorySessionStore(),
       );
@@ -69,6 +80,8 @@ void main() {
         () async {
       final store = MemorySessionStore();
       final sessions = SessionManager(
+      deviceIds: const FakeDeviceId(),
+      
         api: fakeAuthApi(200, loginBody(roles: ['AGENT'])),
         store: store,
       );
@@ -84,6 +97,8 @@ void main() {
     test('a failed login saves nothing', () async {
       final store = MemorySessionStore();
       final sessions = SessionManager(
+      deviceIds: const FakeDeviceId(),
+      
         api: fakeAuthApi(401, errorBody(401, 'Invalid ID or password')),
         store: store,
       );
@@ -100,7 +115,9 @@ void main() {
       'the backend', () async {
     final store = MemorySessionStore(collectorSession);
     final backend = FakeRefreshApi(FakeRefreshApi.issues('unused.access.token'));
-    final sessions = SessionManager(api: backend.api, store: store);
+    final sessions = SessionManager(
+      deviceIds: const FakeDeviceId(),
+      api: backend.api, store: store);
     await sessions.restore();
 
     await sessions.signOut();
@@ -115,6 +132,8 @@ void main() {
   test('signing out offline still signs out on the phone', () async {
     final store = MemorySessionStore(collectorSession);
     final sessions = SessionManager(
+      deviceIds: const FakeDeviceId(),
+      
       api: AuthApi(
         baseUrl: testBaseUrl,
         client: MockClient((_) async => throw http.ClientException('offline')),
@@ -135,7 +154,9 @@ void main() {
       FakeRefreshApi backend,
     ) async {
       final store = MemorySessionStore(collectorSession);
-      final sessions = SessionManager(api: backend.api, store: store);
+      final sessions = SessionManager(
+      deviceIds: const FakeDeviceId(),
+      api: backend.api, store: store);
       await sessions.restore();
       return (sessions, store);
     }
@@ -274,5 +295,64 @@ void main() {
     expect(signInErrorMessage(approved), contains('sign in again tomorrow'));
     expect(signInErrorMessage(const ApiException(ApiFailure.forbidden)),
         contains('collectors'));
+  });
+
+  group('device ID', () {
+    test('signing in sends the phone ID and keeps it with the session',
+        () async {
+      final requests = <http.Request>[];
+      final store = MemorySessionStore();
+      final sessions = SessionManager(
+        deviceIds: const FakeDeviceId('phone-42'),
+        api: fakeAuthApi(200, loginBody(), requests: requests),
+        store: store,
+      );
+
+      await sessions.signIn(staffId: 'STF001', password: 'x');
+
+      expect(jsonDecode(requests.single.body)['deviceId'], 'phone-42');
+      expect(store.session?.deviceId, 'phone-42');
+    });
+
+    test('a phone without an ID gets a clear error and sends nothing',
+        () async {
+      final requests = <http.Request>[];
+      final sessions = SessionManager(
+        deviceIds: const FakeDeviceId(null),
+        api: fakeAuthApi(200, loginBody(), requests: requests),
+        store: MemorySessionStore(),
+      );
+
+      await expectLater(
+        sessions.signIn(staffId: 'STF001', password: 'x'),
+        throwsA(isA<DeviceIdUnavailable>()),
+      );
+      expect(requests, isEmpty);
+      expect(signInErrorMessage(const DeviceIdUnavailable()),
+          contains("phone's ID"));
+    });
+
+    test('every refresh sends the saved phone ID and keeps it', () async {
+      final backend = FakeRefreshApi(FakeRefreshApi.issues('new.access.token'));
+      final store = MemorySessionStore(collectorSession.withDevice('phone-42'));
+      final sessions = SessionManager(
+        deviceIds: const FakeDeviceId(),
+        api: backend.api,
+        store: store,
+      );
+      await sessions.restore();
+
+      await sessions.refreshAccessToken();
+
+      expect(backend.sentDeviceIds, ['phone-42']);
+      expect(store.session?.deviceId, 'phone-42');
+    });
+
+    test('the phone ID survives saving and reading the session', () {
+      final saved = collectorSession.withDevice('phone-42').toJson();
+      expect(AuthSession.fromJson(saved)?.deviceId, 'phone-42');
+      // Sessions saved before the app sent an ID still load.
+      expect(AuthSession.fromJson(collectorSession.toJson())?.deviceId, isNull);
+    });
   });
 }

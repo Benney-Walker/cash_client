@@ -4,109 +4,89 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../common/gradient_wash.dart';
-import '../common/money.dart';
+import '../outbox/outbox.dart';
 import '../outbox/outbox_store.dart';
 import '../theme/app_gradients.dart';
 import '../theme/app_status_colors.dart';
-import 'collector_models.dart';
 
-/// Shown once the payment is safe: saved by the backend, or saved on the
-/// phone when there was no connection.
+/// Shown once a payment is confirmed (design C1, owner decision
+/// 2026-11-24): it's saved on the phone and held for 5 minutes.
 ///
-/// Saved by the backend, it's PENDING for its 10-minute correction window;
-/// the member's balance and SMS follow when it closes (decision D39). That
-/// countdown runs on the phone's monotonic clock from the window length the
-/// server sent, so a wrong phone clock can't shorten or stretch it.
-///
-/// Saved on the phone, the app counts the 10 minutes itself from when it
-/// was recorded, then sends it once there's a connection (decision D40).
+/// During those minutes Correct reopens the filled-in payment form; there's
+/// no cancelling (owner decision 2026-11-24). Then the payment is sent once
+/// there's a connection. The screen follows the payment in the outbox, so a
+/// correction shows here at once, and once the server has it the chip says
+/// so: success only after the backend confirms it.
 class PaymentSavedScreen extends StatefulWidget {
-  PaymentSavedScreen({
+  const PaymentSavedScreen({
     super.key,
-    required CollectorPayment payment,
+    required this.payment,
+    required this.outbox,
+    required this.onCorrect,
     required this.onDone,
-  })  : amount = payment.amount,
-        type = payment.type,
-        memberName = payment.memberName,
-        accountNumber = payment.accountNumber,
-        queued = null,
-        _window = payment.correctionWindow,
-        _now = DateTime.now;
+  });
 
-  /// The payment couldn't reach the backend and is in the outbox.
-  PaymentSavedScreen.queued({
-    super.key,
-    required OutboxPayment payment,
-    required this.onDone,
-    DateTime Function()? now,
-  })  : amount = payment.amount,
-        type = payment.type,
-        memberName = payment.memberName,
-        accountNumber = payment.accountNumber,
-        queued = payment,
-        _window = Duration.zero,
-        _now = now ?? DateTime.now;
-
-  final Cedis amount;
-  final PaymentType type;
-  final String memberName;
-  final String accountNumber;
-  final OutboxPayment? queued;
+  /// The payment as it was saved; the outbox holds its latest version.
+  final OutboxPayment payment;
+  final Outbox outbox;
+  final void Function(OutboxPayment payment) onCorrect;
   final VoidCallback onDone;
-  final Duration _window;
-  final DateTime Function() _now;
-
-  bool get isQueued => queued != null;
 
   @override
   State<PaymentSavedScreen> createState() => _PaymentSavedScreenState();
 }
 
 class _PaymentSavedScreenState extends State<PaymentSavedScreen> {
-  final _clock = Stopwatch()..start();
   Timer? _ticker;
-
-  Duration get _left {
-    final queued = widget.queued;
-    if (queued != null) return queued.timeLeft(widget._now());
-    final left = widget._window - _clock.elapsed;
-    return left.isNegative ? Duration.zero : left;
-  }
+  late OutboxPayment _payment = widget.payment;
+  bool _sent = false;
 
   @override
   void initState() {
     super.initState();
-    if (_left > Duration.zero) {
-      _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
-        if (!mounted) return;
-        setState(() {});
-        if (_left == Duration.zero) _ticker?.cancel();
-      });
-    }
+    widget.outbox.addListener(_follow);
+    _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
   }
 
   @override
   void dispose() {
+    widget.outbox.removeListener(_follow);
     _ticker?.cancel();
     super.dispose();
   }
 
+  void _follow() {
+    final latest = widget.outbox.find(widget.payment.idempotencyKey);
+    setState(() {
+      if (latest != null) {
+        _payment = latest;
+        _sent = false;
+      } else {
+        // Gone from the outbox: the backend has it.
+        _sent = true;
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
-    final queued = widget.isQueued;
     final theme = Theme.of(context);
     final textTheme = theme.textTheme;
     final scheme = theme.colorScheme;
     final gradients = AppGradients.of(context);
-    final status = AppStatusColors.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    final left = _left;
+    final payment = _payment;
+    final now = widget.outbox.now();
+    final left = payment.timeLeft(now);
+    final correctable = !_sent && payment.isCorrectable(now);
 
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: isDark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark,
       child: PopScope(
         // Back goes home, not to the confirm screen, so the same payment
-        // can't be sent again by accident.
+        // can't be recorded again by accident.
         canPop: false,
         onPopInvokedWithResult: (didPop, _) {
           if (!didPop) widget.onDone();
@@ -128,15 +108,13 @@ class _PaymentSavedScreenState extends State<PaymentSavedScreen> {
                   child: Column(
                     children: [
                       Icon(
-                        queued
-                            ? Icons.phone_android_outlined
-                            : Icons.check_circle_outline,
+                        Icons.phone_android_outlined,
                         size: 44,
                         color: gradients.panelText,
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        queued ? 'Saved on this phone' : 'Payment saved',
+                        'Saved on this phone',
                         key: const Key('saved.title'),
                         style: textTheme.titleLarge?.copyWith(
                           color: gradients.panelText,
@@ -145,7 +123,7 @@ class _PaymentSavedScreenState extends State<PaymentSavedScreen> {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        widget.amount.format(),
+                        payment.amount.format(),
                         key: const Key('saved.amount'),
                         style: textTheme.headlineMedium?.copyWith(
                           color: gradients.panelText,
@@ -154,7 +132,8 @@ class _PaymentSavedScreenState extends State<PaymentSavedScreen> {
                         ),
                       ),
                       Text(
-                        '${widget.type.description} · ${widget.memberName}',
+                        '${payment.type.description} · ${payment.memberName}',
+                        key: const Key('saved.line'),
                         textAlign: TextAlign.center,
                         style: textTheme.bodyMedium
                             ?.copyWith(color: gradients.panelTextSecondary),
@@ -170,34 +149,45 @@ class _PaymentSavedScreenState extends State<PaymentSavedScreen> {
                   children: [
                     Align(
                       alignment: Alignment.centerLeft,
-                      child: _PendingChip(
-                        left: left,
-                        status: status,
-                        queued: queued,
-                      ),
+                      child: _sent
+                          ? const OutboxStatusChip.sent()
+                          : OutboxStatusChip(payment: payment, now: now),
                     ),
                     const SizedBox(height: 12),
                     Text(
-                      queued
-                          ? "The server couldn't be reached, so the payment "
-                              'is saved on this phone. It is sent when its 10 '
-                              'minutes '
-                              "are up and you're online. The member's "
-                              'balance and SMS follow then. You can follow it '
-                              'in Outbox on the home screen.'
-                          : "The member's balance is updated and they get an "
-                              'SMS when the 10 minutes are up.',
+                      _sent
+                          ? "The server has the payment. The member's balance "
+                              'is updated and they get an SMS.'
+                          : "It's kept on this phone for 5 minutes so you can "
+                              "correct it, then sent once you're online. The "
+                              "member's balance and SMS follow when the "
+                              'server has it. You can follow it in Outbox on '
+                              'the home screen.',
                       key: const Key('saved.explanation'),
                       style: textTheme.bodyMedium
                           ?.copyWith(color: scheme.onSurfaceVariant),
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      'Account ${widget.accountNumber}',
+                      'Account ${payment.accountNumber}',
+                      key: const Key('saved.account'),
                       style: textTheme.bodyMedium
                           ?.copyWith(color: scheme.onSurfaceVariant),
                     ),
                     const SizedBox(height: 24),
+                    if (correctable) ...[
+                      OutlinedButton(
+                        key: const Key('saved.correct'),
+                        onPressed: () => widget.onCorrect(payment),
+                        child: Text(
+                          'Correct · ${formatCountdown(left)} left',
+                          style: const TextStyle(
+                            fontFeatures: [FontFeature.tabularFigures()],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                    ],
                     OutlinedButton(
                       key: const Key('saved.done'),
                       onPressed: widget.onDone,
@@ -214,29 +204,52 @@ class _PaymentSavedScreenState extends State<PaymentSavedScreen> {
   }
 }
 
-/// PENDING and waiting are warning statuses: an icon and a label, never
-/// colour alone.
-class _PendingChip extends StatelessWidget {
-  const _PendingChip({
-    required this.left,
-    required this.status,
-    required this.queued,
-  });
+/// A payment's state on the phone, as an icon and a label, never colour
+/// alone: "Can correct · 4:12" in its 5 minutes, "Sends when online" after,
+/// "Refused" once the server turned it down, "Sent" once it has it.
+class OutboxStatusChip extends StatelessWidget {
+  const OutboxStatusChip({super.key, required this.payment, required this.now})
+      : _sent = false;
 
-  final Duration left;
-  final AppStatusColors status;
-  final bool queued;
+  const OutboxStatusChip.sent({super.key})
+      : payment = null,
+        now = null,
+        _sent = true;
+
+  final OutboxPayment? payment;
+  final DateTime? now;
+  final bool _sent;
 
   @override
   Widget build(BuildContext context) {
-    final label = queued
-        ? outboxStatusLabel(left)
-        : left > Duration.zero
-            ? 'Pending · ${formatCountdown(left)} left'
-            : 'Pending · being applied';
+    final status = AppStatusColors.of(context);
+    final payment = this.payment;
+    final IconData icon;
+    final String label;
+    final Color fg;
+    final Color bg;
+    if (_sent || payment == null) {
+      icon = Icons.cloud_done_outlined;
+      label = 'Sent';
+      fg = status.success;
+      bg = status.successContainer;
+    } else if (payment.isRefused) {
+      icon = Icons.block;
+      label = 'Refused';
+      fg = status.danger;
+      bg = status.dangerContainer;
+    } else {
+      final at = now ?? DateTime.now();
+      icon = payment.isCorrectable(at)
+          ? Icons.schedule
+          : Icons.cloud_upload_outlined;
+      label = outboxStatusLabel(payment.timeLeft(at));
+      fg = status.warning;
+      bg = status.warningContainer;
+    }
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: status.warningContainer,
+        color: bg,
         borderRadius: BorderRadius.circular(8),
       ),
       child: Padding(
@@ -244,13 +257,13 @@ class _PendingChip extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.schedule, size: 16, color: status.warning),
+            Icon(icon, size: 16, color: fg),
             const SizedBox(width: 6),
             Text(
               label,
-              key: const Key('saved.pending'),
+              key: const Key('saved.status'),
               style: TextStyle(
-                color: status.warning,
+                color: fg,
                 fontWeight: FontWeight.w600,
                 fontFeatures: const [FontFeature.tabularFigures()],
               ),
@@ -262,13 +275,13 @@ class _PendingChip extends StatelessWidget {
   }
 }
 
-/// The status of a payment waiting in the outbox: "Waiting · 9:58" inside
-/// its 10 minutes, then "Sends when online".
+/// A held payment's status: "Can correct · 4:12" inside its 5 minutes,
+/// then "Sends when online".
 String outboxStatusLabel(Duration left) => left > Duration.zero
-    ? 'Waiting · ${formatCountdown(left)}'
+    ? 'Can correct · ${formatCountdown(left)}'
     : 'Sends when online';
 
-/// "9:58".
+/// "4:58".
 String formatCountdown(Duration duration) {
   final totalSeconds = duration.inSeconds;
   final minutes = totalSeconds ~/ 60;

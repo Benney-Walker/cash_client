@@ -14,6 +14,12 @@ import 'collector/member_cache.dart';
 import 'collector/member_directory.dart';
 import 'config/app_config.dart';
 import 'home/home_shell.dart';
+import 'home/today.dart';
+import 'location/location_disclosure_screen.dart';
+import 'location/location_platform.dart';
+import 'location/location_store.dart';
+import 'location/location_sync.dart';
+import 'location/location_tracker.dart';
 import 'outbox/outbox.dart';
 import 'outbox/outbox_store.dart';
 import 'settings/app_info.dart';
@@ -55,10 +61,42 @@ Future<void> main() async {
   String? staffId() => sessions.session?.staffId;
   final outboxStore = SqliteOutboxStore(database);
   final outbox = Outbox(store: outboxStore, staffId: staffId);
+  final locationStore = SqliteLocationStore(database);
+  final location = LocationTracker(
+    platform: DeviceLocationPlatform(),
+    store: locationStore,
+    staffId: staffId,
+  );
+  // Before the first frame, so a collector who has already allowed location
+  // doesn't see the disclosure screen flash up.
+  await location.checkAccess();
 
   // Tapping a refused-payment notification opens the Outbox.
   final openOutbox = ValueNotifier<bool>(false);
   final notifications = await _notifications(() => openOutbox.value = true);
+
+  final sync = SyncScheduler(
+    sync: PaymentSync(
+      store: outboxStore,
+      api: collectorApi,
+      staffId: staffId,
+      notifier: notifications,
+      locations: LocationSync(store: locationStore, api: collectorApi),
+    ),
+    outbox: outbox,
+    connectivity: ConnectivityPlusWatcher(),
+    background: const WorkmanagerScheduler(),
+    notifications: notifications,
+  );
+  // Each 5-minute point goes to the backend straight away when online.
+  location.onPoint = () => sync.syncNow().ignore();
+  final today = TodayController(
+    api: collectorApi,
+    outbox: outbox,
+    store: SqliteDaySummaryStore(database),
+    staffId: staffId,
+  );
+  sync.onSynced = today.synced;
 
   final services = AppServices(
     collectorApi: collectorApi,
@@ -67,22 +105,13 @@ Future<void> main() async {
       cache: SqliteMemberCache(database),
     ),
     outbox: outbox,
-    sync: SyncScheduler(
-      sync: PaymentSync(
-        store: outboxStore,
-        api: collectorApi,
-        staffId: staffId,
-        notifier: notifications,
-      ),
-      outbox: outbox,
-      connectivity: ConnectivityPlusWatcher(),
-      background: const WorkmanagerScheduler(),
-      notifications: notifications,
-    ),
+    sync: sync,
     dayClosure: DayClosure(
       store: SqliteSubmittedDayStore(database),
       staffId: staffId,
     )..load(),
+    location: location,
+    today: today,
     openOutboxRequest: openOutbox,
   );
 
@@ -184,11 +213,30 @@ class _AuthGateState extends State<AuthGate> {
   void initState() {
     super.initState();
     widget.sessions.addListener(_onSessionChanged);
+    widget.services.dayClosure.addListener(_updateTracking);
+    widget.services.location
+      ..startWatching()
+      ..checkAccess();
     // In case the session was restored before this widget existed.
     if (!widget.sessions.isRestoring && widget.sessions.session != null) {
       widget.services.sync.start();
       widget.services.dayClosure.refresh(widget.services.collectorApi);
     }
+    _updateTracking();
+  }
+
+  /// Location is tracked while a collector is signed in and their day isn't
+  /// submitted (owner decisions 2026-11-23 and 2026-11-24). It stops at
+  /// sign-out, when the backend ends the session (approval does), and when
+  /// the day is submitted.
+  void _updateTracking() {
+    final sessions = widget.sessions;
+    final services = widget.services;
+    services.location.track(
+      !sessions.isRestoring &&
+          sessions.session != null &&
+          !services.dayClosure.isClosed,
+    );
   }
 
   @override
@@ -203,6 +251,10 @@ class _AuthGateState extends State<AuthGate> {
   @override
   void dispose() {
     widget.sessions.removeListener(_onSessionChanged);
+    widget.services.dayClosure.removeListener(_updateTracking);
+    widget.services.location
+      ..track(false)
+      ..stopWatching();
     widget.services.sync.stop();
     super.dispose();
   }
@@ -210,6 +262,7 @@ class _AuthGateState extends State<AuthGate> {
   void _onSessionChanged() {
     final services = widget.services;
     if (widget.sessions.isRestoring) return;
+    _updateTracking();
     if (widget.sessions.session != null) {
       // Signed in: send anything waiting in the outbox, now and whenever a
       // chance comes up, and check whether today is already submitted.
@@ -226,6 +279,8 @@ class _AuthGateState extends State<AuthGate> {
     // The branch member list is personal data; it doesn't outlive the
     // session it was downloaded in.
     services.members.clear();
+    // So are today's figures and payments.
+    services.today.clear();
     // This widget is the bottom screen, so swapping it to the login screen
     // isn't enough when other screens (such as the payment screens) are
     // open on top. Close them, so a collector whose session ended can't
@@ -248,12 +303,29 @@ class _AuthGateState extends State<AuthGate> {
         if (session == null) {
           return LoginScreen(sessions: sessions, appInfo: widget.appInfo);
         }
-        return HomeShell(
-          session: session,
-          theme: widget.theme,
-          appInfo: widget.appInfo,
-          services: widget.services,
-          onSignOut: sessions.signOut,
+        final services = widget.services;
+        return ListenableBuilder(
+          listenable:
+              Listenable.merge([services.location, services.dayClosure]),
+          builder: (context, _) {
+            // Design L1: before Android's prompt, say what's tracked and
+            // why. Not needed once the day is submitted: tracking has
+            // stopped and no more payments can be recorded.
+            if (services.location.needsPermission &&
+                !services.dayClosure.isClosed) {
+              return LocationDisclosureScreen(
+                tracker: services.location,
+                onSignOut: sessions.signOut,
+              );
+            }
+            return HomeShell(
+              session: session,
+              theme: widget.theme,
+              appInfo: widget.appInfo,
+              services: services,
+              onSignOut: sessions.signOut,
+            );
+          },
         );
       },
     );

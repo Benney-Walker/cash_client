@@ -9,6 +9,7 @@ class AuthSession {
     required this.roles,
     required this.accessToken,
     required this.refreshToken,
+    this.deviceId,
   });
 
   /// What the collector typed to sign in. The login response doesn't echo
@@ -19,6 +20,11 @@ class AuthSession {
   final String accessToken;
   final String refreshToken;
 
+  /// The phone's device ID sent at sign-in. The backend binds the session to
+  /// it, so every refresh sends it again. Null for a session saved before
+  /// the app sent one (13 Nov–24 Nov 2026 builds); those refresh without it.
+  final String? deviceId;
+
   /// Only collectors may use this app. The value matches the backend's
   /// `Roles.COLLECTOR` enum.
   bool get isCollector => roles.contains('COLLECTOR');
@@ -27,8 +33,9 @@ class AuthSession {
   /// missing or has the wrong type.
   static AuthSession? fromLoginResponse(
     String staffId,
-    Map<String, dynamic> json,
-  ) {
+    Map<String, dynamic> json, {
+    String? deviceId,
+  }) {
     final staffName = json['staffName'];
     final roles = json['roles'];
     final accessToken = json['authToken'];
@@ -47,6 +54,7 @@ class AuthSession {
       roles: List.unmodifiable(roles.whereType<String>()),
       accessToken: accessToken,
       refreshToken: refreshToken,
+      deviceId: deviceId,
     );
   }
 
@@ -62,6 +70,7 @@ class AuthSession {
         roles: roles,
         accessToken: accessToken,
         refreshToken: refreshToken,
+        deviceId: deviceId,
       );
 
   Map<String, dynamic> toJson() => {
@@ -70,6 +79,7 @@ class AuthSession {
         'roles': roles,
         'accessToken': accessToken,
         'refreshToken': refreshToken,
+        if (deviceId != null) 'deviceId': deviceId,
       };
 
   /// Reads what [toJson] wrote. Returns null for anything malformed, so a
@@ -80,11 +90,13 @@ class AuthSession {
     final roles = json['roles'];
     final accessToken = json['accessToken'];
     final refreshToken = json['refreshToken'];
+    final deviceId = json['deviceId'];
     if (staffId is! String ||
         staffName is! String ||
         roles is! List ||
         accessToken is! String ||
-        refreshToken is! String) {
+        refreshToken is! String ||
+        (deviceId != null && deviceId is! String)) {
       return null;
     }
     return AuthSession(
@@ -93,6 +105,7 @@ class AuthSession {
       roles: List.unmodifiable(roles.whereType<String>()),
       accessToken: accessToken,
       refreshToken: refreshToken,
+      deviceId: deviceId as String?,
     );
   }
 }

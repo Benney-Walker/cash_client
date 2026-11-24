@@ -12,7 +12,7 @@ import 'sync_platform.dart';
 /// - when they sign in or the app opens,
 /// - when the app comes back to the foreground,
 /// - when the phone gets a connection,
-/// - when a waiting payment's 10 minutes are up,
+/// - when a held payment's 5 minutes are up,
 /// - when they tap Retry in the Outbox.
 ///
 /// While the app is closed, Android's WorkManager runs the same sync (see
@@ -38,6 +38,10 @@ class SyncScheduler with WidgetsBindingObserver {
 
   StreamSubscription<bool>? _connection;
   Timer? _nextDue;
+
+  /// Runs after each sync, so home can download the new totals once
+  /// payments reach the server. Set by the app.
+  void Function(SyncReport report)? onSynced;
   bool _started = false;
 
   /// The scheduler of the running app, if a collector is signed in. When
@@ -94,6 +98,23 @@ class SyncScheduler with WidgetsBindingObserver {
     }
     await _outbox.refresh();
     _scheduleNextDue();
+    onSynced?.call(report);
+    return report;
+  }
+
+  /// Sends every payment on the phone now, held ones included, before the
+  /// day is submitted (backend, 23 Nov 2026). Works whether or not the
+  /// scheduler is started, since Submit needs a session anyway.
+  Future<SyncReport> sendAllNow() async {
+    SyncReport report;
+    try {
+      report = await _sync.run(includeHeld: true);
+    } catch (_) {
+      report = const SyncReport(offline: true);
+    }
+    await _outbox.refresh();
+    _scheduleNextDue();
+    onSynced?.call(report);
     return report;
   }
 

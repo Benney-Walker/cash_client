@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 
 import '../api/api_exception.dart';
 import '../collector/collector_api.dart';
+import '../location/location_sync.dart';
 import '../outbox/outbox_store.dart';
 
 /// Tells the collector that the backend refused payments, through a phone
@@ -37,11 +38,13 @@ class SyncReport {
   final bool offline;
 }
 
-/// Sends the outbox to the backend (owner decisions 2026-11-07 and
-/// 2026-11-15).
+/// Sends the outbox to the backend (owner decisions 2026-11-15 and
+/// 2026-11-23).
 ///
-/// - A payment goes only after its 10 minutes, with `recordedAt`, so it
-///   arrives final.
+/// - A payment goes only after its 5 minutes on the phone, with its phone
+///   `createdAt` and `updatedAt`; the backend applies it on arrival. Before
+///   submitting, [run] with `includeHeld` sends the held ones early too, as
+///   the backend asks (2026-11-23).
 /// - Each payment is sent on its own. One the backend refuses never holds
 ///   up the others: it stays on the phone with the backend's reason, the
 ///   collector is notified once, and every later sync tries it again.
@@ -50,6 +53,10 @@ class SyncReport {
 /// - Every attempt uses the payment's own idempotency key, so nothing is
 ///   recorded twice, even when an earlier attempt reached the backend but
 ///   its answer was lost.
+/// - The phone's location points go first ([LocationSync]): the backend
+///   refuses a payment without a point within 15 minutes of it (D34). If
+///   the points don't all get through, no payment is sent this time, so
+///   none is refused for a point that's still on the phone.
 ///
 /// The app and the background sync can run at the same time (in separate
 /// isolates); [OutboxStore.claim] keeps them off the same payment.
@@ -59,14 +66,17 @@ class PaymentSync {
     required CollectorApi api,
     required String? Function() staffId,
     required RefusalNotifier notifier,
+    LocationSync? locations,
     DateTime Function()? now,
   })  : _store = store,
         _api = api,
         _staffId = staffId,
         _notifier = notifier,
+        _locations = locations,
         _now = now ?? DateTime.now;
 
   final OutboxStore _store;
+  final LocationSync? _locations;
   final CollectorApi _api;
   final String? Function() _staffId;
   final RefusalNotifier _notifier;
@@ -80,13 +90,32 @@ class PaymentSync {
 
   Future<SyncReport>? _running;
 
-  /// Runs one sync, or joins the one already running.
-  Future<SyncReport> run() =>
-      _running ??= _run().whenComplete(() => _running = null);
+  /// Runs one sync, or joins the one already running. With [includeHeld],
+  /// payments still in their 5 minutes are sent too (before submitting the
+  /// day); a sync already running is waited for first, then this one runs.
+  Future<SyncReport> run({bool includeHeld = false}) async {
+    if (!includeHeld) {
+      return _running ??= _run(false).whenComplete(() => _running = null);
+    }
+    final running = _running;
+    if (running != null) await running;
+    return _running ??= _run(true).whenComplete(() => _running = null);
+  }
 
-  Future<SyncReport> _run() async {
+  Future<SyncReport> _run(bool includeHeld) async {
     final staffId = _staffId();
     if (staffId == null) return SyncReport.nothing;
+
+    final locations = _locations;
+    if (locations != null) {
+      bool delivered;
+      try {
+        delivered = await locations.flush(staffId);
+      } catch (_) {
+        delivered = false;
+      }
+      if (!delivered) return const SyncReport(offline: true);
+    }
 
     var sent = 0;
     var stillRefused = 0;
@@ -97,8 +126,9 @@ class PaymentSync {
     for (final payment in payments) {
       final now = _now();
       // Refused payments are tried again on every sync (owner decision
-      // 2026-11-15); the rest only once their 10 minutes are up.
-      if (!payment.isRefused && !payment.isDue(now)) continue;
+      // 2026-11-15); the rest only once their 5 minutes are up, unless the
+      // day is being submitted.
+      if (!includeHeld && !payment.isRefused && !payment.isDue(now)) continue;
       // The session may have ended part way through.
       if (_staffId() != staffId) break;
       if (!await _store.claim(payment.idempotencyKey, now, now.add(claimFor))) {
@@ -112,7 +142,8 @@ class PaymentSync {
           accountNumber: payment.accountNumber,
           amount: payment.amount,
           description: payment.note,
-          recordedAt: payment.recordedAt,
+          createdAt: payment.createdAt,
+          updatedAt: payment.updatedAt,
         );
         await _store.remove(payment.idempotencyKey);
         sent++;

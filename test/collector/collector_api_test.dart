@@ -6,11 +6,14 @@ import 'package:cash_client/collector/collector_api.dart';
 import 'package:cash_client/collector/collector_models.dart';
 import 'package:cash_client/collector/idempotency.dart';
 import 'package:cash_client/common/money.dart';
+import 'package:cash_client/location/location_point.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 import '../support/fakes.dart';
+
+final created = DateTime.utc(2026, 11, 15, 10);
 
 Matcher failsWith(ApiFailure failure) => throwsA(
       isA<ApiException>().having((e) => e.failure, 'failure', failure),
@@ -73,6 +76,8 @@ void main() {
         accountNumber: '1002345678',
         amount: const Cedis.pesewas(5050),
         description: '  Market day  ',
+        createdAt: created,
+        updatedAt: created,
       );
 
       final request = backend.paymentRequests.single;
@@ -86,10 +91,13 @@ void main() {
         'accountNumber': '1002345678',
         'amount': 50.5,
         'description': 'Market day',
+        'createdAt': '2026-11-15T10:00:00',
+        'updatedAt': '2026-11-15T10:00:00',
       });
-      expect(payment.status, PaymentStatus.pending);
+      // Final on arrival (backend, 23 Nov 2026).
+      expect(payment.status, PaymentStatus.completed);
       expect(payment.amount, const Cedis.pesewas(5000));
-      expect(payment.correctionWindow, const Duration(minutes: 10));
+      expect(payment.receivedAt, DateTime.utc(2026, 11, 15, 10, 5, 30));
     });
 
     test('leaves out an empty note', () async {
@@ -101,6 +109,8 @@ void main() {
         accountNumber: '3002345678',
         amount: const Cedis.pesewas(2000),
         description: '   ',
+        createdAt: created,
+        updatedAt: created,
       );
 
       final body = jsonDecode(backend.paymentRequests.single.body) as Map;
@@ -122,6 +132,8 @@ void main() {
           type: PaymentType.savings,
           accountNumber: '1',
           amount: const Cedis.pesewas(100),
+          createdAt: created,
+          updatedAt: created,
         );
         fail('expected an ApiException');
       } on ApiException catch (e) {
@@ -148,6 +160,8 @@ void main() {
             type: PaymentType.savings,
             accountNumber: '1',
             amount: const Cedis.pesewas(100),
+            createdAt: created,
+            updatedAt: created,
           ),
           failsWith(failure),
         );
@@ -170,8 +184,7 @@ void main() {
     });
   });
 
-  test('an offline payment carries recordedAt in the backend\'s time',
-      () async {
+  test('sends the phone times: recorded and last corrected', () async {
     final backend = FakeCollectorBackend.working();
 
     await backend.api.recordPayment(
@@ -179,23 +192,56 @@ void main() {
       type: PaymentType.savings,
       accountNumber: '1002345678',
       amount: const Cedis.pesewas(100),
-      recordedAt: DateTime.utc(2026, 11, 15, 9, 5, 7),
+      createdAt: DateTime.utc(2026, 11, 15, 9, 5, 7),
+      updatedAt: DateTime.utc(2026, 11, 15, 9, 8, 0),
     );
 
     final body = jsonDecode(backend.paymentRequests.single.body) as Map;
-    expect(body['recordedAt'], '2026-11-15T09:05:07');
+    expect(body['createdAt'], '2026-11-15T09:05:07');
+    expect(body['updatedAt'], '2026-11-15T09:08:00');
+    expect(body.containsKey('recordedAt'), isFalse);
   });
 
-  test('online payments leave recordedAt out', () async {
-    final backend = FakeCollectorBackend.working();
-    await backend.api.recordPayment(
-      idempotencyKey: 'k',
-      type: PaymentType.savings,
-      accountNumber: '1',
-      amount: const Cedis.pesewas(100),
+  group('sendLocations', () {
+    final point = LocationPoint(
+      latitude: 5.6037,
+      longitude: -0.187,
+      accuracyMeters: 12.5,
+      trigger: LocationTrigger.every5Min,
+      recordedAt: created,
     );
-    final body = jsonDecode(backend.paymentRequests.single.body) as Map;
-    expect(body.containsKey('recordedAt'), isFalse);
+
+    test('posts the points and reads what was stored', () async {
+      final backend = FakeCollectorBackend(
+        (_) => http.Response('{"stored":0,"duplicates":1}', 200),
+      );
+
+      final result = await backend.api.sendLocations([point]);
+
+      final request = backend.requests.single;
+      expect(request.url.toString(), '$testBaseUrl/api/collector/v1/locations');
+      expect(jsonDecode(request.body), {
+        'points': [
+          {
+            'latitude': 5.6037,
+            'longitude': -0.187,
+            'accuracyMeters': 12.5,
+            'trigger': 'EVERY_5_MIN',
+            'recordedAt': '2026-11-15T10:00:00',
+          },
+        ],
+      });
+      expect(result.stored, 0);
+      expect(result.duplicates, 1);
+    });
+
+    test('an answer without the counts is an unexpected response', () {
+      final backend = FakeCollectorBackend((_) => http.Response('{}', 200));
+      expect(
+        backend.api.sendLocations([point]),
+        failsWith(ApiFailure.unexpectedResponse),
+      );
+    });
   });
 
   test('backend time is Accra time, which is UTC', () {

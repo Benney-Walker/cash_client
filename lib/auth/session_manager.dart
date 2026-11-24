@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import '../api/api_exception.dart';
 import 'auth_api.dart';
 import 'auth_session.dart';
+import 'device_id.dart';
 import 'refresh_lock.dart';
 import 'session_store.dart';
 import 'sign_in.dart';
@@ -19,13 +20,16 @@ class SessionManager extends ChangeNotifier {
     required AuthApi api,
     required SessionStore store,
     RefreshLock refreshLock = const NoRefreshLock(),
+    DeviceIdSource deviceIds = const AndroidDeviceId(),
   })  : _api = api,
         _store = store,
-        _lock = refreshLock;
+        _lock = refreshLock,
+        _deviceIds = deviceIds;
 
   final AuthApi _api;
   final SessionStore _store;
   final RefreshLock _lock;
+  final DeviceIdSource _deviceIds;
 
   AuthSession? _session;
   bool _restoring = true;
@@ -70,7 +74,13 @@ class SessionManager extends ChangeNotifier {
     required String staffId,
     required String password,
   }) async {
-    final session = await _api.login(staffId: staffId, password: password);
+    // Throws DeviceIdUnavailable; the sign-in screen explains it.
+    final deviceId = await _deviceIds.read();
+    final session = await _api.login(
+      staffId: staffId,
+      password: password,
+      deviceId: deviceId,
+    );
     if (!session.isCollector) throw const NotCollectorException();
     await _store.save(session);
     _session = session;
@@ -139,7 +149,7 @@ class SessionManager extends ChangeNotifier {
       }
 
       try {
-        final tokens = await _refreshOnce(current.refreshToken);
+        final tokens = await _refreshOnce(current);
         // Only keep them if the collector didn't sign out (or sign in again)
         // while the refresh was in flight.
         if (identical(_session, current)) {
@@ -164,12 +174,18 @@ class SessionManager extends ChangeNotifier {
   /// One refresh, retried once at once if it didn't get through: the first
   /// may have reached the backend and only its response been lost, and the
   /// backend accepts the same token again for 30 seconds after that.
-  Future<TokenPair> _refreshOnce(String refreshToken) async {
+  Future<TokenPair> _refreshOnce(AuthSession session) async {
     try {
-      return await _api.refreshTokens(refreshToken);
+      return await _api.refreshTokens(
+        session.refreshToken,
+        deviceId: session.deviceId,
+      );
     } on ApiException catch (e) {
       if (e.failure != ApiFailure.network) rethrow;
-      return _api.refreshTokens(refreshToken);
+      return _api.refreshTokens(
+        session.refreshToken,
+        deviceId: session.deviceId,
+      );
     }
   }
 

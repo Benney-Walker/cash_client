@@ -4,12 +4,19 @@ import 'dart:convert';
 import 'package:cash_client/app_services.dart';
 import 'package:cash_client/auth/auth_api.dart';
 import 'package:cash_client/auth/auth_session.dart';
+import 'package:cash_client/auth/device_id.dart';
 import 'package:cash_client/auth/session_store.dart';
 import 'package:cash_client/collector/collector_api.dart';
 import 'package:cash_client/collector/collector_models.dart';
 import 'package:cash_client/collector/member_cache.dart';
 import 'package:cash_client/collector/member_directory.dart';
 import 'package:cash_client/common/money.dart';
+import 'package:cash_client/home/today.dart';
+import 'package:cash_client/location/location_platform.dart';
+import 'package:cash_client/location/location_point.dart';
+import 'package:cash_client/location/location_store.dart';
+import 'package:cash_client/location/location_sync.dart';
+import 'package:cash_client/location/location_tracker.dart';
 import 'package:cash_client/outbox/outbox.dart';
 import 'package:cash_client/outbox/outbox_store.dart';
 import 'package:cash_client/settings/app_info.dart';
@@ -112,6 +119,9 @@ class FakeRefreshApi {
   /// Refresh tokens the app sent, in order.
   final sentRefreshTokens = <String>[];
 
+  /// Device IDs sent with each refresh (null when none was sent).
+  final sentDeviceIds = <String?>[];
+
   /// Refresh tokens the app sent to `logout`.
   final loggedOut = <String>[];
 
@@ -125,8 +135,9 @@ class FakeRefreshApi {
       }
       if (request.url.path.endsWith('/refresh-collector-token')) {
         calls++;
-        sentRefreshTokens.add(
-            (jsonDecode(request.body) as Map)['refreshToken'] as String);
+        final body = jsonDecode(request.body) as Map;
+        sentRefreshTokens.add(body['refreshToken'] as String);
+        sentDeviceIds.add(body['deviceId'] as String?);
         if (delay > Duration.zero) await Future<void>.delayed(delay);
         if (offline) throw http.ClientException('no connection');
         final (status, body) = refresh;
@@ -221,7 +232,7 @@ String paymentBody({
   String type = 'SAVINGS',
   String accountNumber = '1002345678',
   num amount = 50.0,
-  String status = 'PENDING',
+  String status = 'COMPLETED',
 }) =>
     jsonEncode({
       'transactionId': '6f1c1a2e-0000-4000-8000-000000000001',
@@ -233,18 +244,18 @@ String paymentBody({
       'status': status,
       'failureReason': null,
       'createdAt': '2026-11-15T10:00:00',
-      'recordedAt': null,
-      'correctableUntil': '2026-11-15T10:10:00',
-      'postedAt': null,
+      'updatedAt': '2026-11-15T10:00:00',
+      'receivedAt': '2026-11-15T10:05:30',
+      'postedAt': '2026-11-15T10:05:30',
     });
 
-/// A day summary from `GET /api/collector/v1/payments`. [payments] are
-/// decoded payment bodies; [correctableUntil] overrides each one's window.
+/// A day summary from `GET /api/collector/v1/payments`, with [payments]
+/// payment bodies listed.
 String daySummaryBody({
   num savingsTotal = 1040.0,
   num sharesTotal = 200.0,
   int count = 18,
-  List<String> correctableUntil = const [],
+  int payments = 0,
 }) =>
     jsonEncode({
       'date': '2026-11-15',
@@ -253,11 +264,8 @@ String daySummaryBody({
       'sharesTotal': sharesTotal,
       'total': savingsTotal + sharesTotal,
       'payments': [
-        for (final (i, until) in correctableUntil.indexed)
-          {
-            ...jsonDecode(paymentBody(idempotencyKey: 'day-$i')) as Map,
-            'correctableUntil': until,
-          },
+        for (var i = 0; i < payments; i++)
+          jsonDecode(paymentBody(idempotencyKey: 'day-$i')),
       ],
     });
 
@@ -299,6 +307,33 @@ String submissionsPage([List<Map<String, Object?>> content = const []]) =>
       },
     });
 
+extension SessionWithDevice on AuthSession {
+  /// This session as if signed in on the phone [deviceId].
+  AuthSession withDevice(String deviceId) => AuthSession(
+        staffId: staffId,
+        staffName: staffName,
+        roles: roles,
+        accessToken: accessToken,
+        refreshToken: refreshToken,
+        deviceId: deviceId,
+      );
+}
+
+/// The phone's device ID, without the Android platform channel.
+class FakeDeviceId implements DeviceIdSource {
+  const FakeDeviceId([this.id = 'test-phone-1']);
+
+  /// Null makes [read] fail as a phone without an ID would.
+  final String? id;
+
+  @override
+  Future<String> read() async {
+    final id = this.id;
+    if (id == null) throw const DeviceIdUnavailable();
+    return id;
+  }
+}
+
 /// A scripted collector backend. [handler] answers each request; [requests]
 /// collects what the app sent.
 class FakeCollectorBackend {
@@ -337,6 +372,17 @@ class FakeCollectorBackend {
             request.url.path.endsWith('/collector/v1/payments')) {
           return http.Response(daySummaryBody(), 200);
         }
+        if (request.method == 'POST' &&
+            request.url.path.endsWith('/collector/v1/locations')) {
+          final body = jsonDecode(request.body) as Map<String, dynamic>;
+          return http.Response(
+            jsonEncode({
+              'stored': (body['points'] as List).length,
+              'duplicates': 0,
+            }),
+            200,
+          );
+        }
         if (request.url.path.endsWith('/collector/v1/submissions')) {
           return request.method == 'POST'
               ? http.Response(jsonEncode(submissionJson()), 200)
@@ -350,6 +396,14 @@ class FakeCollectorBackend {
         for (final r in requests)
           if (r.method == 'POST' &&
               r.url.path.endsWith('/collector/v1/payments'))
+            r,
+      ];
+
+  /// Location batches sent (`POST /api/collector/v1/locations`).
+  List<http.Request> get locationRequests => [
+        for (final r in requests)
+          if (r.method == 'POST' &&
+              r.url.path.endsWith('/collector/v1/locations'))
             r,
       ];
 
@@ -385,7 +439,7 @@ class MemoryOutboxStore implements OutboxStore {
     final mine = [
       for (final r in rows.values)
         if (r.payment.staffId == staffId) r.payment,
-    ]..sort((a, b) => a.recordedAt.compareTo(b.recordedAt));
+    ]..sort((a, b) => a.createdAt.compareTo(b.createdAt));
     return mine;
   }
 
@@ -402,6 +456,34 @@ class MemoryOutboxStore implements OutboxStore {
   @override
   Future<void> remove(String key) async {
     rows.remove(key);
+  }
+
+  @override
+  Future<bool> correct(
+    String key, {
+    required PaymentType type,
+    required String accountNumber,
+    required Cedis amount,
+    required DateTime updatedAt,
+  }) async {
+    final row = rows[key];
+    if (row == null || row.payment.isRefused) return false;
+    final held = row.claimedUntil;
+    if (held != null && !held.isBefore(updatedAt)) return false;
+    if (!row.payment.isCorrectable(updatedAt)) return false;
+    final p = row.payment;
+    row.payment = OutboxPayment(
+      idempotencyKey: p.idempotencyKey,
+      staffId: p.staffId,
+      memberName: p.memberName,
+      accountNumber: accountNumber,
+      type: type,
+      amount: amount,
+      note: p.note,
+      createdAt: p.createdAt,
+      updatedAt: updatedAt,
+    );
+    return true;
   }
 
   @override
@@ -442,7 +524,8 @@ class MemoryOutboxStore implements OutboxStore {
         type: p.type,
         amount: p.amount,
         note: p.note,
-        recordedAt: p.recordedAt,
+        createdAt: p.createdAt,
+        updatedAt: p.updatedAt,
         refusalReason: refusalReason ?? p.refusalReason,
         refusedAt: refusedAt ?? p.refusedAt,
         lastTriedAt: lastTriedAt ?? p.lastTriedAt,
@@ -457,11 +540,11 @@ class _Row {
   bool notified = false;
 }
 
-/// An outbox payment recorded by STF001 at [recordedAt].
+/// An outbox payment recorded by STF001 at [createdAt].
 OutboxPayment queuedPayment({
   String key = 'key-1',
   String staffId = 'STF001',
-  required DateTime recordedAt,
+  required DateTime createdAt,
   String memberName = 'Ama Owusu',
   String accountNumber = '1002345678',
   PaymentType type = PaymentType.savings,
@@ -475,9 +558,9 @@ OutboxPayment queuedPayment({
       accountNumber: accountNumber,
       type: type,
       amount: Cedis.pesewas(pesewas),
-      recordedAt: recordedAt.toUtc(),
+      createdAt: createdAt.toUtc(),
       refusalReason: refusalReason,
-      refusedAt: refusalReason == null ? null : recordedAt.toUtc(),
+      refusedAt: refusalReason == null ? null : createdAt.toUtc(),
     );
 
 class MemorySubmittedDayStore implements SubmittedDayStore {
@@ -547,12 +630,23 @@ AppServices testServices({
   String? Function()? staffId,
   DateTime Function()? now,
   MemorySubmittedDayStore? dayStore,
+  FakeLocationPlatform? locationPlatform,
+  MemoryLocationStore? locationStore,
+  MemoryDaySummaryStore? daySummaryStore,
 }) {
   final collector = backend ?? FakeCollectorBackend.working();
+  final points = locationStore ?? MemoryLocationStore();
   final store = outboxStore ?? MemoryOutboxStore();
   final who = staffId ?? () => collectorSession.staffId;
   final notify = notifications ?? FakeNotifications();
   final outbox = Outbox(store: store, staffId: who, now: now);
+  final today = TodayController(
+    api: collector.api,
+    outbox: outbox,
+    store: daySummaryStore ?? MemoryDaySummaryStore(),
+    staffId: who,
+    now: now,
+  );
   return AppServices(
     collectorApi: collector.api,
     members: MemberDirectory(
@@ -567,16 +661,192 @@ AppServices testServices({
         api: collector.api,
         staffId: who,
         notifier: notify,
+        locations: LocationSync(store: points, api: collector.api, now: now),
         now: now,
       ),
       outbox: outbox,
       connectivity: connectivity ?? FakeConnectivity(),
       background: background ?? FakeBackgroundScheduler(),
       notifications: notify,
-    ),
+    )..onSynced = today.synced,
     dayClosure: DayClosure(
       store: dayStore ?? MemorySubmittedDayStore(),
       staffId: who,
     ),
+    location: LocationTracker(
+      platform: locationPlatform ?? FakeLocationPlatform(),
+      store: points,
+      staffId: who,
+      now: now,
+    ),
+    today: today,
   );
+}
+
+/// In-memory [LocationStore] for tests.
+class MemoryLocationStore implements LocationStore {
+  final rows = <({String staffId, LocationPoint point, DateTime? sentAt})>[];
+  int _nextId = 1;
+
+  /// Makes [add] fail, as a full disk would.
+  bool failAdds = false;
+
+  List<LocationPoint> get points => [for (final r in rows) r.point];
+
+  @override
+  Future<void> add(String staffId, LocationPoint point) async {
+    if (failAdds) throw StateError('disk full');
+    rows.add((
+      staffId: staffId,
+      point: LocationPoint(
+        id: _nextId++,
+        latitude: point.latitude,
+        longitude: point.longitude,
+        accuracyMeters: point.accuracyMeters,
+        batteryPercent: point.batteryPercent,
+        trigger: point.trigger,
+        paymentKey: point.paymentKey,
+        recordedAt: point.recordedAt,
+      ),
+      sentAt: null,
+    ));
+  }
+
+  @override
+  Future<List<LocationPoint>> unsent(String staffId, {int limit = 500}) async {
+    final unsent = [
+      for (final r in rows)
+        if (r.staffId == staffId && r.sentAt == null) r.point,
+    ]..sort((a, b) => a.recordedAt.compareTo(b.recordedAt));
+    return unsent.take(limit).toList();
+  }
+
+  @override
+  Future<void> markSent(List<int> ids, DateTime at) async {
+    for (var i = 0; i < rows.length; i++) {
+      final r = rows[i];
+      if (ids.contains(r.point.id)) {
+        rows[i] = (staffId: r.staffId, point: r.point, sentAt: at);
+      }
+    }
+  }
+
+  @override
+  Future<void> remove(List<int> ids) async {
+    rows.removeWhere((r) => ids.contains(r.point.id));
+  }
+
+  @override
+  Future<DateTime?> latestRecordedAt(String staffId) async {
+    DateTime? latest;
+    for (final r in rows) {
+      if (r.staffId != staffId) continue;
+      if (latest == null || r.point.recordedAt.isAfter(latest)) {
+        latest = r.point.recordedAt;
+      }
+    }
+    return latest;
+  }
+
+  @override
+  Future<void> pruneSent(DateTime before) async {
+    rows.removeWhere((r) => r.sentAt != null && r.sentAt!.isBefore(before));
+  }
+}
+
+/// A scripted [LocationPlatform]: location allowed and on by default, with a
+/// fix in Accra.
+class FakeLocationPlatform implements LocationPlatform {
+  FakeLocationPlatform({
+    this.accessNow = LocationAccess.ready,
+    this.afterRequest,
+    this.fix = accraFix,
+    this.battery = 80,
+  });
+
+  static const accraFix =
+      LocationFix(latitude: 5.6037, longitude: -0.187, accuracyMeters: 12);
+
+  LocationAccess accessNow;
+
+  /// What Android's prompt leads to; null leaves [accessNow] as it is.
+  LocationAccess? afterRequest;
+
+  /// The next [currentFix]; null means no reading comes (indoors).
+  LocationFix? fix;
+  int? battery;
+
+  int requests = 0;
+  int appSettingsOpened = 0;
+  int locationSettingsOpened = 0;
+  final tracking = <StreamController<LocationFix>>[];
+  final service = StreamController<bool>.broadcast();
+
+  /// The live tracking stream, if one is listened to.
+  StreamController<LocationFix>? get activeTracking {
+    for (final c in tracking.reversed) {
+      if (c.hasListener) return c;
+    }
+    return null;
+  }
+
+  @override
+  Future<LocationAccess> access() async => accessNow;
+
+  @override
+  Future<LocationAccess> requestAccess() async {
+    requests++;
+    if (afterRequest != null) accessNow = afterRequest!;
+    return accessNow;
+  }
+
+  @override
+  Stream<LocationFix> trackEvery(Duration interval) {
+    final controller = StreamController<LocationFix>();
+    tracking.add(controller);
+    return controller.stream;
+  }
+
+  @override
+  Future<LocationFix> currentFix(Duration timeLimit) async {
+    final fix = this.fix;
+    if (fix == null) throw TimeoutException('no fix', timeLimit);
+    return fix;
+  }
+
+  @override
+  Stream<bool> serviceChanges() => service.stream;
+
+  @override
+  Future<int?> batteryPercent() async => battery;
+
+  @override
+  Future<void> openAppSettings() async {
+    appSettingsOpened++;
+  }
+
+  @override
+  Future<void> openLocationSettings() async {
+    locationSettingsOpened++;
+  }
+}
+
+/// In-memory [DaySummaryStore] for tests.
+class MemoryDaySummaryStore implements DaySummaryStore {
+  MemoryDaySummaryStore([this.saved]);
+
+  SavedDaySummary? saved;
+
+  @override
+  Future<SavedDaySummary?> read() async => saved;
+
+  @override
+  Future<void> save(SavedDaySummary saved) async {
+    this.saved = saved;
+  }
+
+  @override
+  Future<void> clear() async {
+    saved = null;
+  }
 }

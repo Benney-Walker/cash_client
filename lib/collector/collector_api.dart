@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import '../api/api_exception.dart';
 import '../api/endpoint.dart';
 import '../common/money.dart';
+import '../location/location_point.dart';
 import 'collector_models.dart';
 
 /// Calls the backend's collector endpoints (`/api/collector/**`, COLLECTOR
@@ -43,23 +44,27 @@ class CollectorApi {
     return members;
   }
 
-  /// `POST /api/collector/v1/payments`. Saved as PENDING for its 10-minute
-  /// correction window.
+  /// `POST /api/collector/v1/payments`. Applied as soon as it arrives
+  /// (COMPLETED or FAILED).
   ///
   /// Send the same [idempotencyKey] again to retry after a failure: if the
   /// first request did reach the backend, it returns that payment instead
   /// of recording a second one.
   ///
-  /// [recordedAt] is set only for a payment recorded offline. The app sends
-  /// those after their 10 minutes, so the backend applies them straight
-  /// away instead of holding them as PENDING.
+  /// [createdAt] is when the collector recorded it on the phone and
+  /// [updatedAt] its last correction there (the same if never corrected).
+  /// The backend applies the payment as soon as it arrives (backend,
+  /// 23 Nov 2026): the app sends it only after its 5 minutes on the phone.
+  /// It's refused (409) unless a location point taken within 15 minutes of
+  /// [createdAt] reached the backend first, so [sendLocations] goes first.
   Future<CollectorPayment> recordPayment({
     required String idempotencyKey,
     required PaymentType type,
     required String accountNumber,
     required Cedis amount,
+    required DateTime createdAt,
+    required DateTime updatedAt,
     String? description,
-    DateTime? recordedAt,
   }) async {
     final note = description?.trim();
     // The amount is written as a JSON number literal from its exact decimal
@@ -71,7 +76,8 @@ class CollectorApi {
         '"accountNumber":${jsonEncode(accountNumber)},'
         '"amount":${amount.toDecimalString()}'
         '${note == null || note.isEmpty ? '' : ',"description":${jsonEncode(note)}'}'
-        '${recordedAt == null ? '' : ',"recordedAt":${jsonEncode(backendLocalTime(recordedAt))}'}'
+        ',"createdAt":${jsonEncode(backendLocalTime(createdAt))}'
+        ',"updatedAt":${jsonEncode(backendLocalTime(updatedAt))}'
         '}';
     final response = await _send(
       () => _client.post(
@@ -103,9 +109,8 @@ class CollectorApi {
   /// `POST /api/collector/v1/submissions`: closes the day (decision D35).
   ///
   /// Covers every payment not yet handed in; no more payments can be
-  /// recorded until it's approved. Refused with 409 while a payment is in
-  /// its 10-minute window (the message says when the collector can submit).
-  /// Sending it again while waiting returns the same submission, so a retry
+  /// recorded until it's approved. The app sends every payment on the phone
+  /// first (backend, 23 Nov 2026). Sending it again while waiting returns the same submission, so a retry
   /// after a lost response is safe.
   Future<DaySubmission> submitDay() async {
     final response = await _send(
@@ -116,6 +121,44 @@ class CollectorApi {
     );
     return DaySubmission.fromJson(_decode(response.body)) ??
         (throw _unexpected());
+  }
+
+  /// `POST /api/collector/v1/locations`: up to 500 location points (owner
+  /// decisions 2026-11-23, D34). A point sent again is stored once, so a
+  /// retry after a lost response is safe.
+  Future<LocationBatchResult> sendLocations(List<LocationPoint> points) async {
+    assert(points.isNotEmpty && points.length <= 500);
+    final body = jsonEncode({
+      'points': [
+        for (final point in points)
+          {
+            'latitude': point.latitude,
+            'longitude': point.longitude,
+            'accuracyMeters': point.accuracyMeters,
+            if (point.batteryPercent != null)
+              'batteryPercent': point.batteryPercent,
+            'trigger': point.trigger.wireName,
+            if (point.paymentKey != null)
+              'paymentIdempotencyKey': point.paymentKey,
+            'recordedAt': backendLocalTime(point.recordedAt),
+          },
+      ],
+    });
+    final response = await _send(
+      () => _client.post(
+        apiUri(_baseUrl, '/api/collector/v1/locations'),
+        headers: const {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: body,
+      ),
+    );
+    final json = _decode(response.body);
+    final stored = json is Map<String, dynamic> ? json['stored'] : null;
+    final duplicates = json is Map<String, dynamic> ? json['duplicates'] : null;
+    if (stored is! int || duplicates is! int) throw _unexpected();
+    return LocationBatchResult(stored: stored, duplicates: duplicates);
   }
 
   /// `GET /api/collector/v1/submissions?page=0&size=1`: the collector's

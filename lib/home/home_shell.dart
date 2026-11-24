@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../app_services.dart';
 import '../auth/auth_session.dart';
+import '../collector/correct_payment.dart';
 import '../collector/payment_flow.dart';
 import '../outbox/outbox_screen.dart';
 import '../submission/submit_day_screen.dart';
@@ -47,6 +48,8 @@ class _HomeShellState extends State<HomeShell> {
   void initState() {
     super.initState();
     widget.services.openOutboxRequest.addListener(_onOpenOutboxRequest);
+    // Today's figures for home; the sync refreshes them as payments arrive.
+    widget.services.today.refresh();
     // The app may have been started by tapping a notification.
     WidgetsBinding.instance.addPostFrameCallback((_) => _onOpenOutboxRequest());
   }
@@ -71,9 +74,15 @@ class _HomeShellState extends State<HomeShell> {
     navigator.popUntil((route) => route.isFirst);
     navigator.push(
       MaterialPageRoute<void>(
-        builder: (_) => OutboxScreen(
+        builder: (context) => OutboxScreen(
           outbox: widget.services.outbox,
           onSync: widget.services.sync.syncNow,
+          onCorrect: (payment) => openCorrection(
+            context,
+            payment: payment,
+            outbox: widget.services.outbox,
+            directory: widget.services.members,
+          ),
         ),
       ),
     );
@@ -97,16 +106,27 @@ class _HomeShellState extends State<HomeShell> {
         );
       return;
     }
+    // Home shows "Turn on location to record" instead, but location can be
+    // switched off between that and the tap.
+    if (services.location.isOff) {
+      services.location.fixAccess();
+      return;
+    }
     startPaymentFlow(
       context,
       directory: services.members,
-      api: services.collectorApi,
-      saveOffline: (draft, key) async {
-        final queued = await services.outbox.add(draft, idempotencyKey: key);
-        services.sync.paymentQueued(queued);
-        return queued;
-      },
+      outbox: services.outbox,
+      // The payment's own location point (D34), taken before it's saved.
+      beforeSave: services.location.paymentPoint,
+      onSaved: services.sync.paymentQueued,
     );
+  }
+
+  /// Pull to refresh: send what's ready, then download today's figures.
+  Future<void> _refreshToday() async {
+    final services = widget.services;
+    await services.sync.syncNow();
+    await services.today.refresh();
   }
 
   void _submitDay() {
@@ -118,6 +138,7 @@ class _HomeShellState extends State<HomeShell> {
           outbox: services.outbox,
           dayClosure: services.dayClosure,
           syncOutbox: services.sync.syncNow,
+          sendAllNow: services.sync.sendAllNow,
         ),
       ),
     );
@@ -170,10 +191,22 @@ class _HomeShellState extends State<HomeShell> {
         index: _tab,
         children: [
           ListenableBuilder(
-            listenable: widget.services.outbox,
+            listenable: Listenable.merge([
+              widget.services.today,
+              widget.services.location,
+              widget.services.dayClosure,
+            ]),
             builder: (context, _) {
-              final outbox = widget.services.outbox;
+              final services = widget.services;
+              final outbox = services.outbox;
               return HomeScreen(
+                // After submitting, Record deposit explains that the day is
+                // closed, which matters more than location.
+                locationOff: services.location.isOff &&
+                    !services.dayClosure.isClosed,
+                onTurnOnLocation: services.location.fixAccess,
+                today: services.today.view,
+                onRefresh: _refreshToday,
                 staffName: widget.session.staffName,
                 onSeeAll: () => _select(_history),
                 onRecordDeposit: _recordDeposit,
