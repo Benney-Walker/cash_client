@@ -40,20 +40,28 @@ class AuthApi {
   /// `POST /api/auth/v1/collector-login`.
   ///
   /// Collectors have their own sign-in endpoint (backend, 14 Nov 2026). It
-  /// answers 401 ([ApiFailure.unauthorized]) for a wrong staff ID or
-  /// password or an inactive account, and 403 ([ApiFailure.forbidden]) for
-  /// a valid account that isn't a collector. Throws [ApiException].
+  /// takes the phone's [deviceId] (backend, 23 Nov 2026): the first sign-in
+  /// registers the phone, and another phone is refused until the branch's
+  /// agent or an administrator releases it.
+  ///
+  /// It answers 401 ([ApiFailure.unauthorized]) for a wrong staff ID or
+  /// password or an inactive account, and 403 ([ApiFailure.forbidden]),
+  /// with its own message, for an account that isn't a collector, one
+  /// registered to another phone, one locked after 5 wrong passwords, or a
+  /// collector whose day was approved. Throws [ApiException].
   Future<AuthSession> login({
     required String staffId,
     required String password,
+    required String deviceId,
   }) async {
     final response = await _post(
       '/api/auth/v1/collector-login',
-      {'staffId': staffId, 'password': password},
+      {'staffId': staffId, 'password': password, 'deviceId': deviceId},
     );
     final json = _jsonObject(response.body);
-    final session =
-        json == null ? null : AuthSession.fromLoginResponse(staffId, json);
+    final session = json == null
+        ? null
+        : AuthSession.fromLoginResponse(staffId, json, deviceId: deviceId);
     if (session == null) {
       throw const ApiException(ApiFailure.unexpectedResponse, statusCode: 200);
     }
@@ -69,13 +77,23 @@ class AuthApi {
   /// a refresh whose response was lost, so the caller must keep the new one
   /// (see [SessionManager]).
   ///
+  /// The session is bound to the phone it signed in on, so [deviceId] goes
+  /// with every refresh (backend, 23 Nov 2026).
+  ///
   /// The backend answers 401 ([ApiFailure.unauthorized]) when the refresh
-  /// token has expired, is used up or revoked, the account is no longer
-  /// active, or it isn't a collector's. Throws [ApiException].
-  Future<TokenPair> refreshTokens(String refreshToken) async {
+  /// token has expired, is used up or revoked, the device ID doesn't match,
+  /// the account is no longer active, or it isn't a collector's. Throws
+  /// [ApiException].
+  Future<TokenPair> refreshTokens(
+    String refreshToken, {
+    String? deviceId,
+  }) async {
     final response = await _post(
       '/api/auth/v1/refresh-collector-token',
-      {'refreshToken': refreshToken},
+      {
+        'refreshToken': refreshToken,
+        if (deviceId != null) 'deviceId': deviceId,
+      },
       timeout: refreshTimeout,
     );
     final json = _jsonObject(response.body);

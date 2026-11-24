@@ -34,7 +34,9 @@ void main() {
 
   Future<void> signIn() async {
     store = MemorySessionStore(collectorSession);
-    sessions = SessionManager(api: refreshBackend.api, store: store);
+    sessions = SessionManager(
+      deviceIds: const FakeDeviceId(),
+      api: refreshBackend.api, store: store);
     await sessions.restore();
   }
 

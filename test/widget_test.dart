@@ -28,6 +28,8 @@ void main() {
     memberCache = MemoryMemberCache();
     outboxStore = outbox ?? MemoryOutboxStore();
     sessions = SessionManager(
+      deviceIds: const FakeDeviceId(),
+      
       api: (backend ?? FakeRefreshApi(FakeRefreshApi.issues('new.access.token'))).api,
       store: store ?? MemorySessionStore(),
     );

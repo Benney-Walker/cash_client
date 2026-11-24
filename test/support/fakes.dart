@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:cash_client/app_services.dart';
 import 'package:cash_client/auth/auth_api.dart';
 import 'package:cash_client/auth/auth_session.dart';
+import 'package:cash_client/auth/device_id.dart';
 import 'package:cash_client/auth/session_store.dart';
 import 'package:cash_client/collector/collector_api.dart';
 import 'package:cash_client/collector/collector_models.dart';
@@ -112,6 +113,9 @@ class FakeRefreshApi {
   /// Refresh tokens the app sent, in order.
   final sentRefreshTokens = <String>[];
 
+  /// Device IDs sent with each refresh (null when none was sent).
+  final sentDeviceIds = <String?>[];
+
   /// Refresh tokens the app sent to `logout`.
   final loggedOut = <String>[];
 
@@ -125,8 +129,9 @@ class FakeRefreshApi {
       }
       if (request.url.path.endsWith('/refresh-collector-token')) {
         calls++;
-        sentRefreshTokens.add(
-            (jsonDecode(request.body) as Map)['refreshToken'] as String);
+        final body = jsonDecode(request.body) as Map;
+        sentRefreshTokens.add(body['refreshToken'] as String);
+        sentDeviceIds.add(body['deviceId'] as String?);
         if (delay > Duration.zero) await Future<void>.delayed(delay);
         if (offline) throw http.ClientException('no connection');
         final (status, body) = refresh;
@@ -298,6 +303,33 @@ String submissionsPage([List<Map<String, Object?>> content = const []]) =>
         'totalPages': content.isEmpty ? 0 : 1,
       },
     });
+
+extension SessionWithDevice on AuthSession {
+  /// This session as if signed in on the phone [deviceId].
+  AuthSession withDevice(String deviceId) => AuthSession(
+        staffId: staffId,
+        staffName: staffName,
+        roles: roles,
+        accessToken: accessToken,
+        refreshToken: refreshToken,
+        deviceId: deviceId,
+      );
+}
+
+/// The phone's device ID, without the Android platform channel.
+class FakeDeviceId implements DeviceIdSource {
+  const FakeDeviceId([this.id = 'test-phone-1']);
+
+  /// Null makes [read] fail as a phone without an ID would.
+  final String? id;
+
+  @override
+  Future<String> read() async {
+    final id = this.id;
+    if (id == null) throw const DeviceIdUnavailable();
+    return id;
+  }
+}
 
 /// A scripted collector backend. [handler] answers each request; [requests]
 /// collects what the app sent.

@@ -1,4 +1,5 @@
 import '../api/api_exception.dart';
+import 'device_id.dart';
 
 /// Thrown when someone without the COLLECTOR role signs in. Administrators
 /// and agents use the desktop app.
@@ -10,6 +11,10 @@ class NotCollectorException implements Exception {
 String signInErrorMessage(Object error) {
   if (error is NotCollectorException) {
     return 'This app is for collectors. Administrators and agents use the desktop app.';
+  }
+  if (error is DeviceIdUnavailable) {
+    return "Couldn't read this phone's ID, which signing in needs. Restart the "
+        'app and try again.';
   }
   if (error is ApiException) {
     return switch (error.failure) {
