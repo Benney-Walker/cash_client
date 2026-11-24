@@ -94,11 +94,16 @@ class CollectorApi {
     return payment;
   }
 
-  /// `GET /api/collector/v1/payments`: today's payments with totals.
-  Future<CollectorDaySummary> fetchDaySummary() async {
+  /// `GET /api/collector/v1/payments`: a day's payments with totals, today
+  /// unless [day] is given (its date, in Accra time, which is UTC).
+  Future<CollectorDaySummary> fetchDaySummary({DateTime? day}) async {
     final response = await _send(
       () => _client.get(
-        apiUri(_baseUrl, '/api/collector/v1/payments'),
+        apiUri(
+          _baseUrl,
+          '/api/collector/v1/payments',
+          day == null ? null : {'date': backendDate(day)},
+        ),
         headers: const {'Accept': 'application/json'},
       ),
     );
@@ -159,6 +164,28 @@ class CollectorApi {
     final duplicates = json is Map<String, dynamic> ? json['duplicates'] : null;
     if (stored is! int || duplicates is! int) throw _unexpected();
     return LocationBatchResult(stored: stored, duplicates: duplicates);
+  }
+
+  /// `GET /api/collector/v1/submissions?page=0&size=[size]`: the
+  /// collector's latest submissions, newest first.
+  Future<List<DaySubmission>> fetchSubmissions({int size = 10}) async {
+    final response = await _send(
+      () => _client.get(
+        apiUri(
+          _baseUrl,
+          '/api/collector/v1/submissions',
+          {'page': '0', 'size': '$size'},
+        ),
+        headers: const {'Accept': 'application/json'},
+      ),
+    );
+    final json = _decode(response.body);
+    final content = json is Map<String, dynamic> ? json['content'] : null;
+    if (content is! List) throw _unexpected();
+    return [
+      for (final entry in content)
+        DaySubmission.fromJson(entry) ?? (throw _unexpected()),
+    ];
   }
 
   /// `GET /api/collector/v1/submissions?page=0&size=1`: the collector's
@@ -222,6 +249,14 @@ String backendLocalTime(DateTime time) {
   String two(int n) => n.toString().padLeft(2, '0');
   return '${t.year.toString().padLeft(4, '0')}-${two(t.month)}-${two(t.day)}'
       'T${two(t.hour)}:${two(t.minute)}:${two(t.second)}';
+}
+
+/// [day]'s date as the backend's `LocalDate` text, such as `2026-11-15`,
+/// in Accra time (UTC).
+String backendDate(DateTime day) {
+  final t = day.toUtc();
+  String two(int n) => n.toString().padLeft(2, '0');
+  return '${t.year.toString().padLeft(4, '0')}-${two(t.month)}-${two(t.day)}';
 }
 
 /// True when the backend looked at a payment and turned it down, as opposed

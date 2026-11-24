@@ -297,6 +297,8 @@ class DaySubmission {
     required this.failedCount,
     required this.failedAmount,
     this.submittedAt,
+    this.countedAmount,
+    this.approvedAt,
   });
 
   final String id;
@@ -312,6 +314,12 @@ class DaySubmission {
   /// Failed payments, counted separately for the approver.
   final int failedCount;
   final Cedis failedAmount;
+
+  /// The cash the approver counted; null until approved.
+  final Cedis? countedAmount;
+
+  /// When it was approved, in UTC; null until then.
+  final DateTime? approvedAt;
 
   bool get isWaiting => status == SubmissionStatus.submitted;
 
@@ -336,6 +344,8 @@ class DaySubmission {
       expectedAmount: expected,
       failedCount: failedCount,
       failedAmount: failedAmount,
+      countedAmount: Cedis.fromJson(json['countedAmount']),
+      approvedAt: parseServerTime(json['approvedAt']),
     );
   }
 }

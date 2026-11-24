@@ -270,6 +270,7 @@ class RecentPayment {
     required this.amount,
     required this.createdAt,
     required this.state,
+    this.failureReason,
     this.phonePayment,
   });
 
@@ -300,6 +301,7 @@ class RecentPayment {
           PaymentStatus.failed => RecentState.failed,
           _ => RecentState.other,
         },
+        failureReason: payment.failureReason,
       );
 
   final String idempotencyKey;
@@ -309,6 +311,9 @@ class RecentPayment {
   final Cedis amount;
   final DateTime createdAt;
   final RecentState state;
+
+  /// Why the server couldn't apply it, for a failed payment.
+  final String? failureReason;
 
   /// The phone's copy, for a payment still on the phone (its countdown).
   final OutboxPayment? phonePayment;

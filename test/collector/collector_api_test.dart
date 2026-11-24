@@ -244,6 +244,53 @@ void main() {
     });
   });
 
+  group('history', () {
+    test("a day's summary is asked for by its date", () async {
+      final backend = FakeCollectorBackend(
+        (_) => http.Response(daySummaryBody(), 200),
+      );
+
+      await backend.api.fetchDaySummary(day: DateTime.utc(2026, 11, 23, 15));
+
+      expect(backend.requests.single.url.toString(),
+          '$testBaseUrl/api/collector/v1/payments?date=2026-11-23');
+    });
+
+    test('today needs no date', () async {
+      final backend = FakeCollectorBackend(
+        (_) => http.Response(daySummaryBody(), 200),
+      );
+
+      await backend.api.fetchDaySummary();
+
+      expect(backend.requests.single.url.toString(),
+          '$testBaseUrl/api/collector/v1/payments');
+    });
+
+    test('submissions: the latest ten, with the counted cash', () async {
+      final backend = FakeCollectorBackend(
+        (_) => http.Response(
+          submissionsPage([
+            {
+              ...submissionJson(status: 'APPROVED'),
+              'countedAmount': 1240.5,
+              'approvedAt': '2026-11-23T17:40:00',
+            },
+          ]),
+          200,
+        ),
+      );
+
+      final list = await backend.api.fetchSubmissions();
+
+      expect(backend.requests.single.url.queryParameters,
+          {'page': '0', 'size': '10'});
+      expect(list.single.status, SubmissionStatus.approved);
+      expect(list.single.countedAmount, const Cedis.pesewas(124050));
+      expect(list.single.approvedAt, DateTime.utc(2026, 11, 23, 17, 40));
+    });
+  });
+
   test('backend time is Accra time, which is UTC', () {
     // 11:30 at UTC+2 is 09:30 in Accra.
     final elsewhere = DateTime.parse('2026-11-15T11:30:00+02:00');

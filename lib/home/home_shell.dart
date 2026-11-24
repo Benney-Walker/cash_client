@@ -217,7 +217,11 @@ class _HomeShellState extends State<HomeShell> {
               );
             },
           ),
-          const HistoryScreen(),
+          HistoryScreen(
+            api: widget.services.collectorApi,
+            // Downloads when the tab is opened, not with home.
+            active: _tab == _history,
+          ),
           SettingsScreen(
             theme: widget.theme,
             staffId: widget.session.staffId,

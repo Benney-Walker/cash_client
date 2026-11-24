@@ -20,7 +20,7 @@ The app is a client of the `bankingbackend` Spring Boot API. It holds no busines
 | Corrections within the 5 minutes | Done in the app (design C1): amount and account; no cancelling |
 | Withdrawal requests | Removed (owner decision, 15 Nov 2026). Members withdraw at a branch office |
 | Location tracking | Done (designs L1 and H-B, 24 Nov 2026): a point every 5 minutes while signed in, even with the app closed, and one with each payment; sent before payments (backend D34) |
-| Transaction history | Screen in place, empty. Backend day summary in PR #14 |
+| Transaction history | Done (design Y1 with the day switcher Y-A, 24 Nov 2026): the last 7 days' payments from the server, with each day's submission |
 | Daily cash submission and session ending | Done (backend PR #14, decision D35). No rejection step: the approver records the cash counted |
 
 ## Requirements
@@ -103,11 +103,13 @@ Today's figures (`lib/home/today.dart`, owner decisions 24 Nov 2026):
 - Each download is saved on the phone (`sync_meta`). Offline, the one from today is used with "Updated 10:44 · offline"; with none, only the phone's payments count ("Only payments on this phone · offline"). A server error says "couldn't update" instead.
 - Only today's payments, by the phone's recording time (Accra time, which is UTC). Cleared at sign-out and when the session ends.
 
-History (`lib/home/history_screen.dart`), design Y1, "wash header" (12 Nov 2026):
+History (`lib/home/history_screen.dart`), design Y1, "wash header" (12 Nov 2026), with the day switcher Y-A (owner decisions, 24 Nov 2026):
 
-- The same wash header as home (`lib/common/wash_header.dart`), with the title and today's record count and total on a glass strip.
-- Filter chips on the plain page: All, Deposits, Shares (Withdrawals was dropped with collector withdrawal requests, 15 Nov 2026). The selected chip uses the soft indigo pill (set in the theme's `chipTheme`).
-- Until the backend can list a collector's records, the count and total show zero and the list shows an empty state that names the selected filter ("No share payments yet"). Which record types each filter matches will follow the backend's transaction types.
+- The same wash header as home (`lib/common/wash_header.dart`), with the title and a glass strip: arrows to step between **today and the 6 days before it** (7 days in all, owner decision), "Today · Tue 24 Nov", and that day's payment count and total.
+- Filter chips on the plain page: All, Deposits, Shares (Withdrawals was dropped with collector withdrawal requests, 15 Nov 2026). A filter narrows the list, the count and the total. The selected chip uses the soft indigo pill (set in the theme's `chipTheme`).
+- The day's payments as the server has them (`GET /api/collector/v1/payments?date=`), newest first, in the same rows as home's Recent; failed ones show the server's reason. **Payments still on the phone aren't in History** (owner decision, 15 Nov 2026, confirmed 24 Nov): home and the Outbox show them.
+- Under them, the day's submission if there was one (`GET /api/collector/v1/submissions`, the latest ten): "Waiting for approval" with the cash to hand in, or "Approved 17:40" with the cash counted.
+- A day is downloaded the first time it's shown and kept while signed in; opening the tab downloads the shown day again, and pulling down refreshes it. Offline, it says so with **Try again**. Nothing is saved on the phone, so History is gone once the session ends (approval ends it).
 
 If the session ends while a screen is open on top of the tabs (such as the payment screens), the app closes it and goes back to sign-in.
 
@@ -136,7 +138,7 @@ Member list on the phone (`member_cache.dart`, `member_directory.dart`):
 - The list is cleared when the collector signs out or the session ends.
 - The SQLite code itself isn't covered by tests (that needs a native SQLite library on the test machine); the logic around it is tested with an in-memory cache.
 
-Not yet: connecting the History tab to the backend.
+History (above) lists the payments the server has, by day.
 
 ## Submitting the day
 
